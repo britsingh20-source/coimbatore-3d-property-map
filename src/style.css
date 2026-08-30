@@ -75,7 +75,7 @@ dialog::backdrop{background:#092c2666;backdrop-filter:blur(4px)}
 .maplibregl-ctrl-bottom-right,.leaflet-bottom.leaflet-right{bottom:62px}
 @media(max-width:760px){
   header{left:12px;right:auto;width:calc(100vw - 24px);max-width:calc(100vw - 24px);overflow:hidden}.logo{width:44px;height:44px;flex:0 0 44px}header>div:nth-child(2){min-width:0;overflow:hidden}header b,header small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}header button{margin-left:auto;flex:0 0 40px}.summary{top:82px;white-space:nowrap}
-  #location-search{left:12px;right:auto;transform:none;width:calc(100vw - 24px);max-width:calc(100vw - 24px);top:139px;height:46px;overflow:visible}#location-search>button{padding:0 11px;flex:0 0 68px}#location-search input{width:0;min-width:0;font-size:12px}#search-results{top:51px;width:100%;max-width:100%;overflow:hidden}#search-results>button{min-width:0;padding:8px 7px}
+  #location-search{left:12px;right:auto;transform:none;width:calc(100vw - 24px);max-width:calc(100vw - 24px);top:139px;height:46px;overflow:visible;touch-action:manipulation}#location-search>button{padding:0 11px;flex:0 0 68px}#location-search input{width:0;min-width:0;font-size:16px;line-height:1}#search-results{top:51px;width:100%;max-width:100%;overflow:hidden}#search-results>button{min-width:0;padding:8px 7px}
   .view-controls{top:auto;right:12px;bottom:max(18px,env(safe-area-inset-bottom))}
   .legend{bottom:max(18px,env(safe-area-inset-bottom));max-width:calc(100% - 155px)}.legend small{display:none}
   .maplibregl-ctrl-bottom-right,.leaflet-bottom.leaflet-right{bottom:70px}
