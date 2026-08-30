@@ -265,7 +265,12 @@ async function searchLocation(query) {
   );
   const seen = new Set(localMatches.map((property) => property.address.toLowerCase()));
   const remoteHtml = remoteMatches
-    .filter((place) => !seen.has(place.label.toLowerCase()))
+    .filter((place) => {
+      const key = (place.label + "|" + place.subtitle).toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
     .map((place) => resultButton(place.label, place.subtitle, place.coordinates));
   results.innerHTML = localHtml.concat(remoteHtml).join("") ||
     '<div class="no-results"><b>No exact match found</b><small>Try the area, street or landmark name.</small></div>';
