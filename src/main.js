@@ -18,12 +18,34 @@ const propertyGeoJSON = {
 document.querySelector("#app").innerHTML = [
   '<div id="map" aria-label="Interactive 3D property map of Vadavalli"></div>',
   '<div id="loading"><span></span><b>Building Vadavalli in 3D…</b><small id="load-note">Loading roads, terrain and properties</small></div>',
-  '<header><div class="logo">CV</div><div><b>CoimbatoreVeedu</b><small id="map-mode">Vadavalli 3D Property Map</small></div><button id="reset" aria-label="View all properties" title="View all properties">⌖</button></header>',
+  '<header><div class="logo">CV</div><div><b>CoimbatoreVeedu</b><small id="map-mode">Vadavalli 3D Property Map</small></div><button id="admin-open" aria-label="Open admin panel" title="Admin panel">♙</button></header>',
   '<section class="summary"><b>Vadavalli · 7 km radius</b><small>' + properties.length + ' properties available</small></section>',
   '<form id="location-search" role="search"><span>⌕</span><input id="location-query" type="search" placeholder="Search Somayampalayam, Kalapatti…" aria-label="Search a location in Coimbatore" autocomplete="off"><button type="submit">Search</button><div id="search-results" hidden></div></form>',
   '<nav class="view-controls" aria-label="Map view"><button id="view-toggle" class="active" aria-pressed="true"><span>◆</span> 3D view</button><button id="recenter" aria-label="Recenter map">⌖</button></nav>',
   '<section class="legend"><b><i></i> Plot</b><b><i class="orange"></i> Villa</b><small>Tap a budget pin</small></section>',
-  '<dialog id="details"><button class="close" aria-label="Close">×</button><div id="detail-content"></div></dialog>'
+  '<dialog id="details"><button class="close" aria-label="Close">×</button><div id="detail-content"></div></dialog>',
+  '<aside id="admin-panel" class="admin-shell" hidden>',
+    '<div class="admin-topbar"><div class="panel-tabs"><button id="customer-panel-tab">Customer Panel</button><button class="active">Admin Panel</button></div><button id="admin-close" aria-label="Close admin panel">×</button></div>',
+    '<div class="admin-layout">',
+      '<section class="admin-sidebar"><div class="admin-profile"><div class="admin-avatar">AD</div><div><b id="admin-person-name">Administrator</b><small>Property manager</small></div></div>',
+        '<nav class="admin-segments" aria-label="Admin sections"><button class="active" data-admin-section="overview"><span>⌂</span>Overview</button><button data-admin-section="properties"><span>▦</span>Properties</button><button data-admin-section="editor"><span>✎</span>Editor</button></nav>',
+      '</section>',
+      '<main class="admin-content">',
+        '<section id="admin-overview" class="admin-section active"><div class="admin-heading"><div><small>ADMIN PANEL</small><h2>Property workspace</h2></div><span>' + properties.length + ' live properties</span></div>',
+          '<div class="admin-actions"><button data-admin-action="editor"><i>＋</i><b>Update Property</b><small>Add a property, specifications and tour images</small></button><button data-admin-action="properties"><i>✎</i><b>Edit Existing Property</b><small>Select and modify a published property</small></button><button data-admin-action="editor"><i>▧</i><b>Property Images</b><small>Elevation, interiors, parking and portico</small></button><button data-admin-action="properties"><i>⌖</i><b>Location Pins</b><small>Review the exact map coordinates</small></button></div>',
+        '</section>',
+        '<section id="admin-properties" class="admin-section"><div class="admin-heading"><div><small>PROPERTY LIBRARY</small><h2>Edit existing property</h2></div><button class="compact-add" data-admin-action="editor">＋ Add</button></div><div class="admin-property-list">' +
+          properties.map((property) => '<article><div class="property-mini-icon">' + (property.type === "Plot" ? "▱" : "⌂") + '</div><div><b>' + property.title + '</b><small>' + property.address + ' · ' + property.price + '</small></div><button data-edit-property="' + property.id + '">Edit ✎</button></article>').join("") +
+        '</div></section>',
+        '<section id="admin-editor" class="admin-section"><div class="admin-heading"><div><small>PROPERTY EDITOR</small><h2 id="editor-title">Update property</h2></div><button class="editor-back" data-admin-action="overview">← Back</button></div>',
+          '<form id="property-editor-form"><div class="admin-form-grid"><label>Property title<input name="title" placeholder="Example: Vadavalli 3 BHK Villa"></label><label>Property type<select name="type"><option>Plot</option><option>2 BHK Villa</option><option>3 BHK Villa</option><option>4 BHK Villa</option></select></label><label>Location<input name="address" placeholder="Area, locality, Coimbatore"></label><label>Price<input name="price" placeholder="₹58 L"></label><label>Land area<input name="landArea" placeholder="4.2 cents · 1,830 sq.ft."></label><label>Building area<input name="builtUpArea" placeholder="1,650 sq.ft."></label><label>Facing<input name="facing" placeholder="North"></label><label>Approval<input name="approval" placeholder="DTCP / Plan approved"></label><label>Road width<input name="road" placeholder="30 ft road"></label><label>Coordinates<input name="coordinates" placeholder="Longitude, Latitude"></label></div>',
+            '<div class="admin-media"><div><b>Hologram tour images</b><small>Choose or replace each property photograph</small></div><div class="media-slots">' + ["Elevation","Hall","Bedroom","Car Parking","Portico"].map((label) => '<button type="button"><i>＋</i><span>' + label + '</span></button>').join("") + '</div></div>',
+            '<div class="editor-actions"><button type="button" data-admin-action="overview">Cancel</button><button type="submit">Save Property</button></div><p id="admin-save-notice" hidden>Admin interface is ready. Secure cloud saving will be connected to this form.</p>',
+          '</form>',
+        '</section>',
+      '</main>',
+    '</div>',
+  '</aside>'
 ].join("");
 
 const loading = document.querySelector("#loading");
@@ -334,9 +356,60 @@ viewToggle.onclick = () => {
   }
 };
 
-document.querySelector("#reset").onclick = resetView;
 document.querySelector("#recenter").onclick = resetView;
 document.querySelector(".close").onclick = () => document.querySelector("#details").close();
 document.querySelector("#details").addEventListener("click", (event) => {
   if (event.target === event.currentTarget) event.currentTarget.close();
+});
+
+const adminPanel = document.querySelector("#admin-panel");
+function showAdminSection(sectionName) {
+  document.querySelectorAll(".admin-section").forEach((section) => {
+    section.classList.toggle("active", section.id === "admin-" + sectionName);
+  });
+  document.querySelectorAll("[data-admin-section]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.adminSection === sectionName);
+  });
+  document.querySelector(".admin-content").scrollTop = 0;
+}
+
+function closeAdminPanel() {
+  adminPanel.hidden = true;
+  document.body.classList.remove("admin-mode");
+}
+
+document.querySelector("#admin-open").onclick = () => {
+  adminPanel.hidden = false;
+  document.body.classList.add("admin-mode");
+  showAdminSection("overview");
+};
+document.querySelector("#admin-close").onclick = closeAdminPanel;
+document.querySelector("#customer-panel-tab").onclick = closeAdminPanel;
+
+document.querySelectorAll("[data-admin-section]").forEach((button) => {
+  button.onclick = () => showAdminSection(button.dataset.adminSection);
+});
+document.querySelectorAll("[data-admin-action]").forEach((button) => {
+  button.onclick = () => showAdminSection(button.dataset.adminAction);
+});
+document.querySelectorAll("[data-edit-property]").forEach((button) => {
+  button.onclick = () => {
+    const property = properties.find((item) => item.id === button.dataset.editProperty);
+    if (!property) return;
+    const form = document.querySelector("#property-editor-form");
+    ["title", "type", "address", "price", "landArea", "builtUpArea", "facing", "approval", "road"].forEach((field) => {
+      if (form.elements[field]) form.elements[field].value = property[field] || "";
+    });
+    form.elements.coordinates.value = property.coordinates.join(", ");
+    document.querySelector("#editor-title").textContent = "Edit " + property.title;
+    document.querySelector("#admin-save-notice").hidden = true;
+    showAdminSection("editor");
+  };
+});
+document.querySelector("#property-editor-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  document.querySelector("#admin-save-notice").hidden = false;
+});
+document.querySelectorAll(".media-slots button").forEach((button) => {
+  button.onclick = () => button.classList.toggle("selected");
 });
