@@ -20,6 +20,7 @@ document.querySelector("#app").innerHTML = [
   '<div id="loading"><span></span><b>Building Vadavalli in 3D…</b><small id="load-note">Loading roads, terrain and properties</small></div>',
   '<header><div class="logo">CV</div><div><b>CoimbatoreVeedu</b><small id="map-mode">Vadavalli 3D Property Map</small></div><button id="reset" aria-label="View all properties" title="View all properties">⌖</button></header>',
   '<section class="summary"><b>Vadavalli · 7 km radius</b><small>' + properties.length + ' properties available</small></section>',
+  '<form id="location-search" role="search"><span>⌕</span><input id="location-query" type="search" placeholder="Search Somayampalayam, Kalapatti…" aria-label="Search a location in Coimbatore" autocomplete="off"><button type="submit">Search</button><div id="search-results" hidden></div></form>',
   '<nav class="view-controls" aria-label="Map view"><button id="view-toggle" class="active" aria-pressed="true"><span>◆</span> 3D view</button><button id="recenter" aria-label="Recenter map">⌖</button></nav>',
   '<section class="legend"><b><i></i> Plot</b><b><i class="orange"></i> Villa</b><small>Tap a budget pin</small></section>',
   '<dialog id="details"><button class="close" aria-label="Close">×</button><div id="detail-content"></div></dialog>'
@@ -31,9 +32,29 @@ const viewToggle = document.querySelector("#view-toggle");
 let activeMap;
 let renderer = "maplibre";
 let threeDimensional = true;
+let searchMarker;
+
+const defaultTour = [
+  { label: "Elevation", scene: "elevation" },
+  { label: "Hall", scene: "hall" },
+  { label: "Bedroom", scene: "bedroom" }
+];
+
+function tourSlide(photo, index) {
+  const visual = photo.url
+    ? '<img src="' + photo.url + '" alt="' + (photo.alt || photo.label) + '" loading="lazy">'
+    : '<div class="holo-placeholder scene-' + (photo.scene || "room") + '"><div class="holo-grid"></div><div class="holo-object"><i></i><i></i><i></i></div><small>Photo slot ready</small></div>';
+  return '<figure class="holo-slide' + (index === 0 ? " active" : "") + '" data-slide="' + index + '">' +
+    visual + '<figcaption><b>' + photo.label + '</b><span>Property tour</span></figcaption></figure>';
+}
 
 function openDetails(property) {
+  const tour = property.tour?.length ? property.tour : defaultTour;
   document.querySelector("#detail-content").innerHTML = [
+    '<section class="hologram-tour"><div class="holo-title"><span>◈ HOLOGRAM TOUR</span><small>Swipe through property spaces</small></div>',
+    '<div class="holo-stage">', tour.map(tourSlide).join(""),
+    '<button class="tour-arrow previous" aria-label="Previous image">‹</button><button class="tour-arrow next" aria-label="Next image">›</button></div>',
+    '<div class="tour-thumbs">', tour.map((photo, index) => '<button class="' + (index === 0 ? "active" : "") + '" data-tour="' + index + '">' + photo.label + '</button>').join(""), '</div></section>',
     '<div class="detail-head"><span>', property.type, '</span><strong>', property.price,
     '</strong><small>⌖ ', property.address, '</small></div><div class="detail-body"><h2>',
     property.title, '</h2><div class="specs"><p><small>Property size</small><b>', property.size,
@@ -45,6 +66,17 @@ function openDetails(property) {
     '<p class="location-note">Pin shown at the supplied property location. Site pad is a location highlight, not a legal boundary.</p></div>'
   ].join("");
   document.querySelector("#details").showModal();
+  let currentSlide = 0;
+  const showSlide = (next) => {
+    currentSlide = (next + tour.length) % tour.length;
+    document.querySelectorAll(".holo-slide").forEach((slide, index) => slide.classList.toggle("active", index === currentSlide));
+    document.querySelectorAll("[data-tour]").forEach((button, index) => button.classList.toggle("active", index === currentSlide));
+  };
+  document.querySelector(".tour-arrow.previous").onclick = () => showSlide(currentSlide - 1);
+  document.querySelector(".tour-arrow.next").onclick = () => showSlide(currentSlide + 1);
+  document.querySelectorAll("[data-tour]").forEach((button) => {
+    button.onclick = () => showSlide(Number(button.dataset.tour));
+  });
 }
 
 function makeMarker(property) {
@@ -164,6 +196,90 @@ function startArchitecturalFallback() {
   finishLoading();
 }
 
+function placeSearchPin(coordinates, label) {
+  if (searchMarker) searchMarker.remove();
+  const pin = document.createElement("div");
+  pin.className = "search-location-pin";
+  pin.innerHTML = '<span>⌖</span><b>' + label + '</b>';
+  if (renderer === "maplibre") {
+    searchMarker = new maplibregl.Marker({ element: pin, anchor: "bottom" })
+      .setLngLat(coordinates).addTo(activeMap);
+  } else {
+    searchMarker = L.marker([coordinates[1], coordinates[0]], {
+      icon: L.divIcon({ className: "search-pin-wrapper", html: pin.outerHTML, iconSize: [180, 55], iconAnchor: [90, 55] }),
+      zIndexOffset: 900
+    }).addTo(activeMap);
+  }
+}
+
+function goToLocation(coordinates, label) {
+  placeSearchPin(coordinates, label);
+  if (renderer === "maplibre") {
+    activeMap.flyTo({ center: coordinates, zoom: 15.8, pitch: threeDimensional ? 60 : 0, duration: 1300 });
+  } else {
+    activeMap.flyTo([coordinates[1], coordinates[0]], 16, { duration: 1 });
+  }
+  document.querySelector("#location-query").value = label;
+  document.querySelector("#search-results").hidden = true;
+}
+
+function resultButton(label, subtitle, coordinates, propertyId = "") {
+  return '<button type="button" data-lng="' + coordinates[0] + '" data-lat="' + coordinates[1] +
+    '" data-label="' + label.replaceAll('"', "&quot;") + '" data-property="' + propertyId + '"><span>⌖</span><b>' +
+    label + '</b><small>' + subtitle + '</small></button>';
+}
+
+async function searchLocation(query) {
+  const results = document.querySelector("#search-results");
+  const normalized = query.trim().toLowerCase();
+  const localMatches = properties.filter((property) =>
+    (property.title + " " + property.address).toLowerCase().includes(normalized)
+  );
+  results.hidden = false;
+  results.innerHTML = '<div class="searching"><i></i> Finding exact location…</div>';
+
+  let remoteMatches = [];
+  try {
+    const params = new URLSearchParams({
+      q: query + ", Coimbatore, Tamil Nadu",
+      limit: "5",
+      lang: "en",
+      countrycode: "IN",
+      bbox: "76.70,10.80,77.20,11.30"
+    });
+    const response = await fetch("https://photon.komoot.io/api/?" + params);
+    if (!response.ok) throw new Error("Location search unavailable");
+    const data = await response.json();
+    remoteMatches = (data.features || []).map((feature) => {
+      const info = feature.properties || {};
+      const label = info.name || info.street || info.district || "Coimbatore location";
+      const subtitle = [info.district, info.city, info.state].filter(Boolean).filter((value, index, list) => list.indexOf(value) === index).join(", ");
+      return { label, subtitle: subtitle || "Coimbatore, Tamil Nadu", coordinates: feature.geometry.coordinates };
+    });
+  } catch (error) {
+    console.info("Online geocoder unavailable; property search remains active.", error);
+  }
+
+  const localHtml = localMatches.map((property) =>
+    resultButton(property.address, property.title + " · " + property.price, property.coordinates, property.id)
+  );
+  const seen = new Set(localMatches.map((property) => property.address.toLowerCase()));
+  const remoteHtml = remoteMatches
+    .filter((place) => !seen.has(place.label.toLowerCase()))
+    .map((place) => resultButton(place.label, place.subtitle, place.coordinates));
+  results.innerHTML = localHtml.concat(remoteHtml).join("") ||
+    '<div class="no-results"><b>No exact match found</b><small>Try the area, street or landmark name.</small></div>';
+
+  results.querySelectorAll("button").forEach((button) => {
+    button.onclick = () => {
+      const coordinates = [Number(button.dataset.lng), Number(button.dataset.lat)];
+      goToLocation(coordinates, button.dataset.label);
+      const property = properties.find((item) => item.id === button.dataset.property);
+      if (property) window.setTimeout(() => openDetails(property), 550);
+    };
+  });
+}
+
 try {
   if (maplibregl.supported({ failIfMajorPerformanceCaveat: false })) start3D();
   else startArchitecturalFallback();
@@ -171,6 +287,16 @@ try {
   document.querySelector("#map").replaceChildren();
   startArchitecturalFallback();
 }
+
+document.querySelector("#location-search").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const query = document.querySelector("#location-query").value.trim();
+  if (query.length >= 2) searchLocation(query);
+});
+
+document.querySelector("#location-query").addEventListener("input", (event) => {
+  if (!event.target.value.trim()) document.querySelector("#search-results").hidden = true;
+});
 
 function resetView() {
   if (renderer === "maplibre") {
