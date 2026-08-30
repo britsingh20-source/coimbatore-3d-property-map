@@ -222,7 +222,9 @@ function goToLocation(coordinates, label) {
   } else {
     activeMap.flyTo([coordinates[1], coordinates[0]], 16, { duration: 1 });
   }
-  document.querySelector("#location-query").value = label;
+  const searchInput = document.querySelector("#location-query");
+  searchInput.value = label;
+  searchInput.blur();
   document.querySelector("#search-results").hidden = true;
 }
 
