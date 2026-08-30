@@ -37,7 +37,9 @@ let searchMarker;
 const defaultTour = [
   { label: "Elevation", scene: "elevation" },
   { label: "Hall", scene: "hall" },
-  { label: "Bedroom", scene: "bedroom" }
+  { label: "Bedroom", scene: "bedroom" },
+  { label: "Car Parking", scene: "parking" },
+  { label: "Portico", scene: "portico" }
 ];
 
 function tourSlide(photo, index) {
@@ -57,7 +59,8 @@ function openDetails(property) {
     '<div class="tour-thumbs">', tour.map((photo, index) => '<button class="' + (index === 0 ? "active" : "") + '" data-tour="' + index + '">' + photo.label + '</button>').join(""), '</div></section>',
     '<div class="detail-head"><span>', property.type, '</span><strong>', property.price,
     '</strong><small>⌖ ', property.address, '</small></div><div class="detail-body"><h2>',
-    property.title, '</h2><div class="specs"><p><small>Property size</small><b>', property.size,
+    property.title, '</h2><div class="specs"><p><small>Land area</small><b>', property.landArea || property.size,
+    '</b></p><p><small>Building area</small><b>', property.builtUpArea || (property.type === "Plot" ? "Not applicable" : "Not provided"),
     '</b></p><p><small>Facing</small><b>', property.facing,
     '</b></p><p><small>Approval</small><b>', property.approval,
     '</b></p><p><small>Approach road</small><b>', property.road,
@@ -242,7 +245,7 @@ async function searchLocation(query) {
   try {
     const params = new URLSearchParams({
       q: query + ", Coimbatore, Tamil Nadu",
-      limit: "5",
+      limit: "4",
       lang: "en",
       countrycode: "IN",
       bbox: "76.70,10.80,77.20,11.30"
@@ -272,7 +275,8 @@ async function searchLocation(query) {
       return true;
     })
     .map((place) => resultButton(place.label, place.subtitle, place.coordinates));
-  results.innerHTML = localHtml.concat(remoteHtml).join("") ||
+  const visibleResults = localHtml.concat(remoteHtml).slice(0, 3);
+  results.innerHTML = visibleResults.join("") ||
     '<div class="no-results"><b>No exact match found</b><small>Try the area, street or landmark name.</small></div>';
 
   results.querySelectorAll("button").forEach((button) => {
