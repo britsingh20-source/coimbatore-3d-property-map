@@ -18,6 +18,8 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.R2_ACCOUNT_ID }}
       CRM_IMPORT_TOKEN: ${{ secrets.CRM_IMPORT_TOKEN }}
+      TC01_PIN: ${{ secrets.TC01_PIN }}
+      TC02_PIN: ${{ secrets.TC02_PIN }}
       DB_NAME: coimbatore-lead-crm
       WORKER_NAME: coimbatore-lead-crm-api
     steps:
@@ -72,6 +74,7 @@ jobs:
           npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/dual_queue.sql || true
           npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/real_lead_intake.sql || true
           npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/telecaller_sessions.sql
+          npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/telecaller_credentials.sql
       - name: Deploy Worker
         id: deploy
         shell: bash
@@ -88,6 +91,24 @@ jobs:
       - name: Configure secure import token
         if: ${{ env.CRM_IMPORT_TOKEN != '' }}
         run: printf '%s' "$CRM_IMPORT_TOKEN" | npx wrangler secret put IMPORT_TOKEN --config wrangler.crm.toml
+      - name: Configure telecaller PINs
+        if: ${{ env.CRM_IMPORT_TOKEN != '' && (env.TC01_PIN != '' || env.TC02_PIN != '') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL='${{ steps.deploy.outputs.worker_url }}'
+          set_pin() {
+            ID="$1"; PIN="$2"
+            [ -z "$PIN" ] && return 0
+            [[ "$PIN" =~ ^[0-9]{3}$ ]] || { echo "$ID PIN must be exactly 3 digits"; exit 1; }
+            curl -fsS -X POST "$URL/api/admin/staff/set-pin" \
+              -H "Authorization: Bearer $CRM_IMPORT_TOKEN" \
+              -H "Content-Type: application/json" \
+              --data "$(jq -nc --arg employee_id "$ID" --arg pin "$PIN" '{employee_id:$employee_id,pin:$pin}')" >/dev/null
+            echo "$ID PIN configured"
+          }
+          set_pin TC01 "$TC01_PIN"
+          set_pin TC02 "$TC02_PIN"
       - name: Verify backend health
         run: |
           sleep 5
