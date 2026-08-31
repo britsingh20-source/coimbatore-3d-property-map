@@ -20,6 +20,10 @@ jobs:
       CRM_IMPORT_TOKEN: ${{ secrets.CRM_IMPORT_TOKEN }}
       TC01_PIN: ${{ secrets.TC01_PIN }}
       TC02_PIN: ${{ secrets.TC02_PIN }}
+      MG01_PIN: ${{ secrets.MG01_PIN }}
+      MG02_PIN: ${{ secrets.MG02_PIN }}
+      AD01_PIN: ${{ secrets.AD01_PIN }}
+      DR01_PIN: ${{ secrets.DR01_PIN }}
       DB_NAME: coimbatore-lead-crm
       WORKER_NAME: coimbatore-lead-crm-api
     steps:
@@ -91,15 +95,15 @@ jobs:
       - name: Configure secure import token
         if: ${{ env.CRM_IMPORT_TOKEN != '' }}
         run: printf '%s' "$CRM_IMPORT_TOKEN" | npx wrangler secret put IMPORT_TOKEN --config wrangler.crm.toml
-      - name: Configure telecaller PINs
-        if: ${{ env.CRM_IMPORT_TOKEN != '' && (env.TC01_PIN != '' || env.TC02_PIN != '') }}
+      - name: Configure staff PINs
+        if: ${{ env.CRM_IMPORT_TOKEN != '' }}
         shell: bash
         run: |
           set -euo pipefail
           URL='${{ steps.deploy.outputs.worker_url }}'
           set_pin() {
             ID="$1"; PIN="$2"
-            [ -z "$PIN" ] && return 0
+            [ -z "$PIN" ] && { echo "$ID PIN secret missing"; exit 1; }
             [[ "$PIN" =~ ^[0-9]{3}$ ]] || { echo "$ID PIN must be exactly 3 digits"; exit 1; }
             curl -fsS -X POST "$URL/api/admin/staff/set-pin" \
               -H "Authorization: Bearer $CRM_IMPORT_TOKEN" \
@@ -109,6 +113,10 @@ jobs:
           }
           set_pin TC01 "$TC01_PIN"
           set_pin TC02 "$TC02_PIN"
+          set_pin MG01 "$MG01_PIN"
+          set_pin MG02 "$MG02_PIN"
+          set_pin AD01 "$AD01_PIN"
+          set_pin DR01 "$DR01_PIN"
       - name: Verify backend health
         run: |
           sleep 5
