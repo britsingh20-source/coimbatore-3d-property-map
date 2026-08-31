@@ -1,0 +1,71 @@
+name: Import Real CRM Leads
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  import-real-leads:
+    runs-on: ubuntu-latest
+    env:
+      WORKER_URL: https://coimbatore-lead-crm-api.britsingh20.workers.dev
+      EXPECTED_UNIQUE_LEADS: "184"
+    steps:
+      - name: Verify secure import secrets
+        shell: bash
+        env:
+          CRM_IMPORT_TOKEN: ${{ secrets.CRM_IMPORT_TOKEN }}
+          CRM_IMPORT_PAYLOAD_GZ_B64: ${{ secrets.CRM_IMPORT_PAYLOAD_GZ_B64 }}
+        run: |
+          set -euo pipefail
+          [ -n "$CRM_IMPORT_TOKEN" ] || { echo "CRM_IMPORT_TOKEN is missing"; exit 1; }
+          [ -n "$CRM_IMPORT_PAYLOAD_GZ_B64" ] || { echo "CRM_IMPORT_PAYLOAD_GZ_B64 is missing"; exit 1; }
+          echo "Secure import secrets are available."
+
+      - name: Decode private lead payload
+        shell: bash
+        env:
+          CRM_IMPORT_PAYLOAD_GZ_B64: ${{ secrets.CRM_IMPORT_PAYLOAD_GZ_B64 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s' "$CRM_IMPORT_PAYLOAD_GZ_B64" | base64 --decode | gzip -dc > /tmp/secure_leads.json
+          jq -e '.leads and (.leads | type == "array")' /tmp/secure_leads.json >/dev/null
+          echo "Private lead payload decoded successfully."
+
+      - name: Import leads into Cloudflare D1 through Worker
+        shell: bash
+        env:
+          CRM_IMPORT_TOKEN: ${{ secrets.CRM_IMPORT_TOKEN }}
+        run: |
+          set -euo pipefail
+          jq '{leads:.leads}' /tmp/secure_leads.json > /tmp/import_body.json
+          RESPONSE=$(curl -fsS -X POST \
+            -H "Authorization: Bearer ${CRM_IMPORT_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data-binary @/tmp/import_body.json \
+            "${WORKER_URL}/api/admin/import")
+          echo "$RESPONSE" | jq '{ok, inserted, updated, skipped}'
+          test "$(echo "$RESPONSE" | jq -r '.ok')" = "true"
+
+      - name: Verify live CRM counts
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsS "${WORKER_URL}/api/leads" > /tmp/live_leads.json
+          TOTAL=$(jq '.leads | length' /tmp/live_leads.json)
+          echo "Live unique leads: $TOTAL"
+          jq -r '.leads | group_by(.status) | map({status:(.[0].status // "Unknown"), count:length}) | .[] | "\(.status): \(.count)"' /tmp/live_leads.json
+          if [ "$TOTAL" -lt "$EXPECTED_UNIQUE_LEADS" ]; then
+            echo "Expected at least $EXPECTED_UNIQUE_LEADS unique leads after import, found $TOTAL"
+            exit 1
+          fi
+
+      - name: Remove private temporary files
+        if: always()
+        shell: bash
+        run: |
+          rm -f /tmp/secure_leads.json /tmp/import_body.json /tmp/live_leads.json
+          echo "Private temporary files removed."
