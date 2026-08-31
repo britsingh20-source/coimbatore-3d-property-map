@@ -2,6 +2,9 @@ name: Import Real CRM Leads
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/import-real-leads.yml'
 
 permissions:
   contents: read
