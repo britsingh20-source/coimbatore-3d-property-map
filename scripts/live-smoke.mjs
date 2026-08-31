@@ -28,7 +28,9 @@ async function openAdminAndLogin(page, employeeId, pin){
   await page.fill('#tc-pin',pin);
   await page.click('#tc-login-form button[type="submit"]');
   await page.waitForFunction(()=>document.body.classList.contains('staff-session-active'),null,{timeout:10000});
-  await page.waitForSelector('#crm-live-indicator',{timeout:8000});
+  await page.waitForSelector('[data-admin-section="leads"]',{state:'visible',timeout:10000});
+  await page.click('[data-admin-section="leads"]');
+  await page.waitForSelector('#admin-leads.active',{timeout:8000});
   await page.waitForFunction(()=>document.querySelector('#crm-live-indicator')?.textContent?.includes('Live D1'),null,{timeout:10000});
 }
 
@@ -39,7 +41,7 @@ async function openAdminAndLogin(page, employeeId, pin){
   page.on('console',m=>{if(m.type()==='error')consoleErrors.push(m.text());});
   await baseCheck(page);
   await openAdminAndLogin(page,'TC01',tcPin);
-  await page.waitForSelector('#crm-dual-queue',{timeout:10000});
+  await page.waitForSelector('#crm-dual-queue',{state:'visible',timeout:10000});
   await page.waitForFunction(()=>document.querySelectorAll('#queue-active-batch .queue-batch-list article').length>0,null,{timeout:12000});
   await page.waitForTimeout(800);
   const count=await page.locator('#queue-active-batch .queue-batch-list article').count();
@@ -60,13 +62,15 @@ async function openAdminAndLogin(page, employeeId, pin){
   const page=await context.newPage();
   await baseCheck(page);
   await openAdminAndLogin(page,'AD01',adminPin);
-  await page.waitForSelector('#admin-overview.active',{timeout:8000});
   const title=await page.locator('#admin-person-name').textContent();
   const live=await page.locator('#crm-live-indicator').textContent();
+  const leadRows=await page.locator('#crm-lead-list .crm-lead-row').count();
   if(!String(title).includes('Administrator')) throw new Error(`Admin profile incorrect: ${title}`);
   if(!String(live).includes('Live D1')) throw new Error(`CRM not live: ${live}`);
+  if(leadRows<1) throw new Error('Administrator lead list is empty');
   results.admin_profile=title?.trim();
   results.crm_indicator=live?.trim();
+  results.admin_visible_leads=leadRows;
   await context.close();
 }
 
