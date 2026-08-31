@@ -16,12 +16,32 @@ function queueLabel(queue) { return queue==="fresh"?"Fresh Leads":"Backlog Leads
 function safe(v){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));}
 function token(){return window.CRM_SESSION?.token?.()||localStorage.getItem("crm-telecaller-session-token")||"";}
 function currentUser(){return window.CRM_SESSION?.user?.()||localStorage.getItem("crm-current-user")||"";}
-async function authFetch(path,options={}){const t=token();const r=await fetch(`${API_BASE}${path}`,{...options,headers:{"content-type":"application/json",...(t?{authorization:`Bearer ${t}`}:{}) ,...(options.headers||{})}});const d=await r.json().catch(()=>({}));if(!r.ok){if(r.status===401)window.CRM_SESSION?.logout?.("idle");throw new Error(d.error||"Request failed");}return d;}
+async function authFetch(path,options={}){
+  const t=token();
+  const r=await fetch(`${API_BASE}${path}`,{...options,headers:{"content-type":"application/json",...(t?{authorization:`Bearer ${t}`}:{}) ,...(options.headers||{})}});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok){const e=new Error(d.error||"Request failed");e.status=r.status;e.data=d;throw e;}
+  return d;
+}
 
 async function loadBatch(){
   const user=currentUser();
-  if(!TELECALLERS.includes(user)||!window.CRM_SESSION?.isActive?.())return [];
-  const data=await authFetch("/api/telecaller/batch");queueMode=data.queue;return data.leads||[];
+  if(!TELECALLERS.includes(user)||!token())return [];
+  let lastError=null;
+  for(let attempt=0;attempt<3;attempt++){
+    try{
+      const data=await authFetch("/api/telecaller/batch");
+      queueMode=data.queue;
+      return data.leads||[];
+    }catch(error){
+      lastError=error;
+      if(error.status!==401||attempt===2)break;
+      await new Promise(resolve=>setTimeout(resolve,350*(attempt+1)));
+      const valid=await window.CRM_SESSION?.verify?.();
+      if(!valid)continue;
+    }
+  }
+  throw lastError||new Error("Could not load Current 10 leads");
 }
 
 function ensureCallDialog(){
@@ -51,8 +71,8 @@ async function refreshQueue(){
   root.querySelector("#queue-today").textContent=today;root.querySelector("#queue-plan").innerHTML=plan.map(item=>`<div class="queue-role ${item.label===user?"active":""}"><b>${item.label}</b><span>${item.queue==="fresh"?"NEW CALLS":"OLD CALLS"}</span><small>${queueLabel(item.queue)} · 10 at a time</small></div>`).join("");
   const batch=root.querySelector("#queue-active-batch");
   if(!TELECALLERS.includes(user)){batch.innerHTML=`<div class="queue-supervisor"><b>Supervisor view</b><p>Administrators and managers retain full visibility. Telecallers work only from their server-assigned current 10.</p></div>`;root.querySelector("#queue-fresh-count").textContent="—";root.querySelector("#queue-backlog-count").textContent="—";root.querySelector("#queue-oldest").textContent="—";return;}
-  if(!window.CRM_SESSION?.isActive?.()){batch.innerHTML=`<div class="queue-supervisor"><b>Telecaller login required</b><p>Start a timed telecaller session to receive your current 10 leads.</p></div>`;return;}
+  if(!token()){batch.innerHTML=`<div class="queue-supervisor"><b>Telecaller login required</b><p>Start a timed telecaller session to receive your current 10 leads.</p></div>`;return;}
   try{queueCache=await loadBatch();root.querySelector("#queue-fresh-count").textContent=queueMode==="fresh"?queueCache.length:"—";root.querySelector("#queue-backlog-count").textContent=queueMode==="backlog"?queueCache.length:"—";root.querySelector("#queue-oldest").textContent=queueCache.length?indiaDateKey(queueCache[0].first_received_at):"—";renderLeadBatch(batch,queueCache,user,queueMode||assignedQueue);}catch(e){batch.innerHTML=`<div class="queue-empty">${safe(e.message)}</div>`;}
 }
-function mountQueue(){const crm=document.querySelector("#admin-leads"),teamFlow=document.querySelector("#crm-team-flow");if(!crm||!teamFlow||document.querySelector("#crm-dual-queue"))return false;teamFlow.insertAdjacentHTML("afterend",`<section id="crm-dual-queue" class="crm-dual-queue"><div class="queue-title"><div><small>DAILY CALLING PLAN · <span id="queue-today"></span></small><h2>Fresh + Backlog Dual Queue</h2><p>Each telecaller receives a protected server-side batch of 10. Completed calls are replaced automatically.</p></div><span class="queue-rule">Current 10</span></div><div class="queue-metrics"><div><small>Fresh assigned</small><b id="queue-fresh-count">—</b></div><div><small>Backlog assigned</small><b id="queue-backlog-count">—</b></div><div><small>Oldest in batch</small><b id="queue-oldest">—</b></div></div><div id="queue-plan" class="queue-plan"></div><div id="queue-active-batch" class="queue-active-batch"></div></section>`);ensureCallDialog();document.querySelector("#crm-user-select")?.addEventListener("change",()=>setTimeout(refreshQueue,0));window.addEventListener("crm-session-login",refreshQueue);window.addEventListener("crm-session-logout",refreshQueue);window.addEventListener("storage",refreshQueue);refreshQueue();return true;}
+function mountQueue(){const crm=document.querySelector("#admin-leads"),teamFlow=document.querySelector("#crm-team-flow");if(!crm||!teamFlow||document.querySelector("#crm-dual-queue"))return false;teamFlow.insertAdjacentHTML("afterend",`<section id="crm-dual-queue" class="crm-dual-queue"><div class="queue-title"><div><small>DAILY CALLING PLAN · <span id="queue-today"></span></small><h2>Fresh + Backlog Dual Queue</h2><p>Each telecaller receives a protected server-side batch of 10. Completed calls are replaced automatically.</p></div><span class="queue-rule">Current 10</span></div><div class="queue-metrics"><div><small>Fresh assigned</small><b id="queue-fresh-count">—</b></div><div><small>Backlog assigned</small><b id="queue-backlog-count">—</b></div><div><small>Oldest in batch</small><b id="queue-oldest">—</b></div></div><div id="queue-plan" class="queue-plan"></div><div id="queue-active-batch" class="queue-active-batch"></div></section>`);ensureCallDialog();document.querySelector("#crm-user-select")?.addEventListener("change",()=>setTimeout(refreshQueue,0));window.addEventListener("crm-session-login",()=>setTimeout(refreshQueue,250));window.addEventListener("crm-session-logout",refreshQueue);window.addEventListener("storage",refreshQueue);refreshQueue();return true;}
 let attempts=0;const timer=setInterval(()=>{attempts+=1;if(mountQueue()||attempts>50)clearInterval(timer);},100);
