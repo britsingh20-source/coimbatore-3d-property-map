@@ -60,7 +60,7 @@ function ensureStrip(){
 function openSessionDialog(){if(!session)return;renderDialog();document.querySelector("#tc-session-dialog").showModal();}
 function renderDialog(){if(!session)return;const pairs={"#tc-dialog-user":session.user_label,"#tc-dialog-id":session.employee_id||"—","#tc-dialog-role":session.role||"staff","#tc-dialog-start":fmtTime(session.login_at),"#tc-dialog-elapsed":elapsed(session.login_at)};for(const [s,v] of Object.entries(pairs)){const el=document.querySelector(s);if(el)el.textContent=v;}}
 function showGate(){ensureUI();document.querySelector("#staff-login-gate").classList.add("show");document.body.classList.remove("staff-session-active","tc-session-active");setTimeout(()=>document.querySelector("#tc-employee-id")?.focus(),50);}
-function hideGate(){ensureUI();document.querySelector("#staff-login-gate").classList.remove("show");document.body.classList.add("staff-session-active");document.body.classList.toggle("tc-session-active",isTelecaller(session?.user_label));ensureStrip();document.querySelector("#work-hours-panel")?.classList.toggle("show",isSupervisor(session?.role));renderStrip();loadWorkHours();}
+function hideGate(){ensureUI();document.querySelector("#staff-login-gate").classList.remove("show");document.body.classList.add("staff-session-active");document.body.classList.toggle("tc-session-active",isTelecaller(session?.user_label));ensureStrip();const supervisor=isSupervisor(session?.role);document.querySelector("#work-hours-panel")?.classList.toggle("show",supervisor);renderStrip();if(supervisor&&WORK_BASE)loadWorkHours();}
 function renderStrip(){if(!session)return;ensureStrip();const set=(s,v)=>{const e=document.querySelector(s);if(e)e.textContent=v;};set("#tc-session-user",session.user_label);set("#tc-session-id",session.employee_id||"—");set("#tc-session-role",session.role||"staff");const mine=hoursData?.staff?.find(x=>x.user_label===session.user_label);set("#tc-today-hours",mine?hoursLabel(mine.today_hours):elapsed(session.login_at));renderDialog();}
 
 function renderWorkHours(data){
@@ -71,9 +71,9 @@ function renderWorkHours(data){
   }).join("")||`<div class="work-hours-loading">No working-hour records for this month.</div>`;
 }
 async function loadWorkHours(force=false){
-  if(!session||!WORK_BASE)return;ensureStrip();const month=document.querySelector("#work-hours-month")?.value||monthKey();
-  try{const data=await workApi(`/api/work-hours?month=${encodeURIComponent(month)}`);renderWorkHours(data);if(isSupervisor(session.role))document.querySelector("#work-hours-panel")?.classList.add("show");}
-  catch(e){if(e.status===401)return logout("idle");const box=document.querySelector("#work-hours-content");if(box&&isSupervisor(session.role))box.innerHTML=`<div class="work-hours-error">Working-hours report is temporarily unavailable. ${esc(e.message)}</div>`;}
+  if(!session||!WORK_BASE||!isSupervisor(session.role))return;ensureStrip();const month=document.querySelector("#work-hours-month")?.value||monthKey();
+  try{const data=await workApi(`/api/work-hours?month=${encodeURIComponent(month)}`);renderWorkHours(data);document.querySelector("#work-hours-panel")?.classList.add("show");}
+  catch(e){const box=document.querySelector("#work-hours-content");if(box)box.innerHTML=`<div class="work-hours-error">Working-hours report is temporarily unavailable. Your CRM login remains active. ${esc(e.message)}</div>`;}
 }
 
 async function login(employeeId,pin){
@@ -90,7 +90,7 @@ async function logout(reason="manual"){
 function syncSelector(user){const s=document.querySelector("#crm-user-select");if(s){s.value=user;s.disabled=true;}localStorage.setItem(USER_KEY,user);}
 async function restore(){const t=token();if(!t){showGate();return;}try{session=await api("/api/session/me");localStorage.setItem(USER_KEY,session.user_label);syncSelector(session.user_label);hideGate();startChecks();}catch(_){localStorage.removeItem(TOKEN_KEY);showGate();}}
 async function sendActivity(){if(!session||document.hidden)return;const now=Date.now();if(now-lastActivitySent<45000)return;lastActivitySent=now;try{await api("/api/session/activity",{method:"POST",body:"{}"});}catch(e){if(e.status===401)logout("idle");}}
-function startChecks(){if(checkTimer)clearInterval(checkTimer);if(hoursTimer)clearInterval(hoursTimer);checkTimer=setInterval(async()=>{renderStrip();if(!session)return;try{session={...session,...await api("/api/session/me")};document.body.classList.toggle("tc-session-active",isTelecaller(session.user_label));}catch(e){if(e.status===401)logout("idle");}},30000);hoursTimer=setInterval(()=>loadWorkHours(),60000);}
+function startChecks(){if(checkTimer)clearInterval(checkTimer);if(hoursTimer)clearInterval(hoursTimer);checkTimer=setInterval(async()=>{renderStrip();if(!session)return;try{session={...session,...await api("/api/session/me")};document.body.classList.toggle("tc-session-active",isTelecaller(session.user_label));}catch(e){if(e.status===401)logout("idle");}},30000);hoursTimer=setInterval(()=>{if(session&&isSupervisor(session.role))loadWorkHours();},60000);}
 async function callStart(){if(!session||!isTelecaller(session.user_label))return;callWasStarted=true;try{await api("/api/session/call-start",{method:"POST",body:"{}"});}catch(_){} }
 async function callEnd(){if(!session||!callWasStarted)return;callWasStarted=false;try{await api("/api/session/call-end",{method:"POST",body:"{}"});}catch(e){if(e.status===401)logout("idle");}}
 
