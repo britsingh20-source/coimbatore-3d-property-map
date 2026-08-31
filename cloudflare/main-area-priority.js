@@ -148,11 +148,39 @@ async function manualLead(request,env){
   await env.DB.prepare("INSERT INTO lead_activity(lead_id,activity_type,caller,area_code,notes) VALUES(?, 'manual_incoming_new', ?, ?, ?)").bind(created.id,session.user_label,areaCode,`New lead received ${receivedDate} via ${source}`).run();
   return json({ok:true,duplicate:false,lead:created,received_date:receivedDate,queue_classification:"fresh_today"},201,env);
 }
+async function backupData(request,env){
+  const session=await activeSession(request,env);
+  if(!session)return json({error:"Session expired",expired:true},401,env);
+  if(!["Administrator","Director"].includes(session.user_label))return json({error:"Backup export is available to Administrator and Director only"},403,env);
+  const [leads,activity,areas,catchments,aliases,priority]=await Promise.all([
+    env.DB.prepare("SELECT * FROM leads ORDER BY id").all(),
+    env.DB.prepare("SELECT * FROM lead_activity ORDER BY lead_id,id").all(),
+    env.DB.prepare("SELECT * FROM area_master ORDER BY canonical_name").all(),
+    env.DB.prepare("SELECT * FROM area_catchments ORDER BY parent_code").all(),
+    env.DB.prepare("SELECT * FROM area_catchment_aliases ORDER BY parent_code,alias_display").all(),
+    env.DB.prepare("SELECT * FROM area_priority_config WHERE id=1").first()
+  ]);
+  return json({
+    ok:true,
+    generated_at:istIsoNow(),
+    generated_by:session.user_label,
+    counts:{leads:(leads.results||[]).length,activities:(activity.results||[]).length,areas:(areas.results||[]).length},
+    sheets:{
+      Customers:leads.results||[],
+      Activities:activity.results||[],
+      Area_Master:areas.results||[],
+      Catchments:catchments.results||[],
+      Area_Aliases:aliases.results||[],
+      Priority_Config:priority?[priority]:[]
+    }
+  },200,env);
+}
 
 export default {async fetch(request,env,ctx){
   const url=new URL(request.url),path=url.pathname.replace(/\/$/,"")||"/";
   if(request.method==="OPTIONS")return baseWorker.fetch(request,env,ctx);
   if(request.method==="POST"&&path==="/api/leads/manual")return manualLead(request,env);
+  if(request.method==="GET"&&path==="/api/backup/data")return backupData(request,env);
   if(request.method==="GET"&&path==="/api/areas")return json(await areaResponse(env),200,env);
   if(request.method==="GET"&&path==="/api/areas/resolve"){
     const text=url.searchParams.get("q")||"",area=await resolveArea(env,text),cfg=await config(env);
