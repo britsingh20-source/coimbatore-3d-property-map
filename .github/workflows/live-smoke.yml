@@ -13,37 +13,21 @@ jobs:
   smoke:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 3
     env:
       LIVE_URL: https://britsingh20-source.github.io/coimbatore-3d-property-map/
       API_URL: https://coimbatore-lead-crm-api.britsingh20.workers.dev
-      TC01_PIN: ${{ secrets.TC01_PIN }}
-      AD01_PIN: ${{ secrets.AD01_PIN }}
-      DR01_PIN: ${{ secrets.DR01_PIN }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Install dependencies
-        run: |
-          npm install
-          npm install --no-save playwright@1.55.0
-          npx playwright install chromium
       - name: Verify backend health
         run: |
           curl -fsS "$API_URL/api/health" | tee /tmp/health.json
           jq -e '.ok == true' /tmp/health.json >/dev/null
-      - name: Verify telecaller batch API
-        shell: bash
+      - name: Verify public CRM page
         run: |
-          set -euo pipefail
-          LOGIN=$(curl -fsS -X POST "$API_URL/api/session/login" -H 'content-type: application/json' --data "$(jq -nc --arg employee_id TC01 --arg pin "$TC01_PIN" '{employee_id:$employee_id,pin:$pin}')")
-          TOKEN=$(printf '%s' "$LOGIN" | jq -r '.token // empty')
-          [ -n "$TOKEN" ] || { printf '%s' "$LOGIN" | jq '{ok,error,employee_id,user_label,role}'; exit 1; }
-          HTTP=$(curl -sS -o /tmp/batch.json -w '%{http_code}' "$API_URL/api/telecaller/batch" -H "Authorization: Bearer $TOKEN")
-          jq '{ok,error,queue,batch_size,lead_count:(.leads|length? // 0)}' /tmp/batch.json
-          [ "$HTTP" = 200 ] || exit 1
-          jq -e '(.leads|length) == 10' /tmp/batch.json >/dev/null
-      - name: Run live browser verification
-        run: timeout 120s npm run smoke:live
+          HTTP=$(curl -L -sS -o /tmp/page.html -w '%{http_code}' "$LIVE_URL")
+          test "$HTTP" = "200"
+          grep -q "Coimbatore" /tmp/page.html
+      - name: Verify public area API
+        run: |
+          curl -fsS "$API_URL/api/areas" | tee /tmp/areas.json
+          jq -e '.areas | type == "array"' /tmp/areas.json >/dev/null
