@@ -7,15 +7,12 @@
     return true;
   };
   let tries=0;
-  const find=setInterval(()=>{
+  const finder=setInterval(()=>{
     tries+=1;
-    if(hideLoader()||tries>40) clearInterval(find);
+    if(hideLoader()||tries>=15) clearInterval(finder);
   },100);
-  setTimeout(hideLoader,2500);
-  const observer=new MutationObserver(()=>{
-    const gate=document.querySelector('#staff-login-gate.show');
-    const admin=document.querySelector('#admin-panel:not([hidden])');
-    if(gate||admin) hideLoader();
-  });
-  observer.observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['class','hidden']});
+  setTimeout(hideLoader,1200);
+  document.addEventListener('click',e=>{
+    if(e.target.closest?.('#admin-open')) hideLoader();
+  },true);
 })();
