@@ -14,6 +14,7 @@ async function loadCRM(){
       await import('./queue-phone-display.js');
       await import('./crm-queue.js');
       await import('./area-selector.js');
+      await import('./manual-lead-intake.js');
       await import('./director-view.js');
       window.dispatchEvent(new CustomEvent('crm-modules-ready'));
     } finally {
