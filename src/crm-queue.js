@@ -15,10 +15,11 @@ function rolePlan(dateKey=indiaDateKey()) { return TELECALLERS.map(label=>({labe
 function queueLabel(queue) { return queue==="fresh"?"Fresh Leads":"Backlog Leads"; }
 function safe(v){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));}
 function token(){return window.CRM_SESSION?.token?.()||localStorage.getItem("crm-telecaller-session-token")||"";}
+function currentUser(){return window.CRM_SESSION?.user?.()||localStorage.getItem("crm-current-user")||"";}
 async function authFetch(path,options={}){const t=token();const r=await fetch(`${API_BASE}${path}`,{...options,headers:{"content-type":"application/json",...(t?{authorization:`Bearer ${t}`}:{}) ,...(options.headers||{})}});const d=await r.json().catch(()=>({}));if(!r.ok){if(r.status===401)window.CRM_SESSION?.logout?.("idle");throw new Error(d.error||"Request failed");}return d;}
 
 async function loadBatch(){
-  const user=localStorage.getItem("crm-current-user")||"Telecaller 1";
+  const user=currentUser();
   if(!TELECALLERS.includes(user)||!window.CRM_SESSION?.isActive?.())return [];
   const data=await authFetch("/api/telecaller/batch");queueMode=data.queue;return data.leads||[];
 }
@@ -46,7 +47,7 @@ function renderLeadBatch(container,leads,user,queue){
 }
 
 async function refreshQueue(){
-  const root=document.querySelector("#crm-dual-queue");if(!root)return;const today=indiaDateKey(),user=localStorage.getItem("crm-current-user")||"Telecaller 1",assignedQueue=queueForTelecaller(user,today),plan=rolePlan(today);
+  const root=document.querySelector("#crm-dual-queue");if(!root)return;const today=indiaDateKey(),user=currentUser(),assignedQueue=queueForTelecaller(user,today),plan=rolePlan(today);
   root.querySelector("#queue-today").textContent=today;root.querySelector("#queue-plan").innerHTML=plan.map(item=>`<div class="queue-role ${item.label===user?"active":""}"><b>${item.label}</b><span>${item.queue==="fresh"?"NEW CALLS":"OLD CALLS"}</span><small>${queueLabel(item.queue)} · 10 at a time</small></div>`).join("");
   const batch=root.querySelector("#queue-active-batch");
   if(!TELECALLERS.includes(user)){batch.innerHTML=`<div class="queue-supervisor"><b>Supervisor view</b><p>Administrators and managers retain full visibility. Telecallers work only from their server-assigned current 10.</p></div>`;root.querySelector("#queue-fresh-count").textContent="—";root.querySelector("#queue-backlog-count").textContent="—";root.querySelector("#queue-oldest").textContent="—";return;}
