@@ -1,0 +1,63 @@
+name: Deploy Staff Work Hours API
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'cloudflare/work-hours-worker.js'
+      - '.github/workflows/deploy-work-hours.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-work-hours:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.R2_ACCOUNT_ID }}
+      DB_NAME: coimbatore-lead-crm
+      WORKER_NAME: coimbatore-work-hours-api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify Cloudflare credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ -n "${CLOUDFLARE_API_TOKEN:-}" ] || { echo "CLOUDFLARE_API_TOKEN missing"; exit 1; }
+          [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ] || { echo "CLOUDFLARE_ACCOUNT_ID missing"; exit 1; }
+      - name: Install Wrangler
+        run: npm install --no-save wrangler@latest
+      - name: Resolve D1 database
+        id: d1
+        shell: bash
+        run: |
+          set -euo pipefail
+          LIST=$(curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/d1/database?per_page=100")
+          DB_ID=$(echo "$LIST" | jq -r --arg NAME "$DB_NAME" '.result[]? | select(.name==$NAME) | .uuid' | head -n1)
+          [ -n "$DB_ID" ] || { echo "D1 database not found"; exit 1; }
+          echo "db_id=$DB_ID" >> "$GITHUB_OUTPUT"
+      - name: Generate Wrangler config
+        shell: bash
+        run: |
+          cat > wrangler.work-hours.toml <<EOF
+          name = "${WORKER_NAME}"
+          main = "cloudflare/work-hours-worker.js"
+          compatibility_date = "2026-08-31"
+          workers_dev = true
+          [[d1_databases]]
+          binding = "DB"
+          database_name = "${DB_NAME}"
+          database_id = "${{ steps.d1.outputs.db_id }}"
+          EOF
+      - name: Deploy Work Hours Worker
+        run: npx wrangler deploy --config wrangler.work-hours.toml
+      - name: Verify Work Hours API
+        shell: bash
+        run: |
+          sleep 4
+          curl -fsS "https://${WORKER_NAME}.britsingh20.workers.dev/api/health"
