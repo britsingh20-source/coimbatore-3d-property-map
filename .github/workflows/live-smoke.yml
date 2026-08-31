@@ -19,6 +19,7 @@ jobs:
       API_URL: https://coimbatore-lead-crm-api.britsingh20.workers.dev
       TC01_PIN: ${{ secrets.TC01_PIN }}
       AD01_PIN: ${{ secrets.AD01_PIN }}
+      DR01_PIN: ${{ secrets.DR01_PIN }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
