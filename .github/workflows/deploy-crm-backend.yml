@@ -82,6 +82,7 @@ jobs:
           npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/fix_staff_fk_aliases.sql
           npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/retry_queue.sql
           npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/area_master_priority.sql
+          npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/primary_working_areas.sql
       - name: Deploy Worker
         id: deploy
         shell: bash
@@ -120,7 +121,7 @@ jobs:
           set_pin MG02 "$MG02_PIN"
           set_pin AD01 "$AD01_PIN"
           set_pin DR01 "$DR01_PIN"
-      - name: Verify backend health and retry routes
+      - name: Verify backend health and primary areas
         shell: bash
         run: |
           set -euo pipefail
@@ -133,9 +134,11 @@ jobs:
           RETRY_STATUS=$(curl -sS -o /tmp/retry-probe.json -w '%{http_code}' "$URL/api/retry-queue/summary")
           test "$RETRY_STATUS" = "401"
           jq -e '.error == "Session expired"' /tmp/retry-probe.json >/dev/null
-          curl -fsS "$URL/api/areas" | jq -e '.areas | length > 50' >/dev/null
-          curl -fsS "$URL/api/areas" | jq -e '.priority_config.p1_max_km == 12' >/dev/null
-          echo "CRM, working-hours, retry-queue and area-priority routes are live"
+          AREA_JSON=$(curl -fsS "$URL/api/areas")
+          echo "$AREA_JSON" | jq -e '.areas | length >= 9' >/dev/null
+          echo "$AREA_JSON" | jq -e '[.areas[].code] | all(. as $c | ["VDV","TDM","PMD","VPP","KRM","IDG","SRV","KLP","SLR"] | index($c) != null) or (length > 9)' >/dev/null
+          echo "$AREA_JSON" | jq -e '.priority_config.p1_max_km == 12' >/dev/null
+          echo "CRM, working-hours, retry-queue and primary-area routes are live"
       - name: Update frontend runtime API URL
         shell: bash
         run: |
