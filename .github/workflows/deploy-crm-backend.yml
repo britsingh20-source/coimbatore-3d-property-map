@@ -59,7 +59,7 @@ jobs:
         run: |
           cat > wrangler.crm.toml <<EOF
           name = "${WORKER_NAME}"
-          main = "cloudflare/worker.js"
+          main = "cloudflare/main-with-hours.js"
           compatibility_date = "2026-08-31"
           workers_dev = true
           [vars]
@@ -119,16 +119,26 @@ jobs:
           set_pin AD01 "$AD01_PIN"
           set_pin DR01 "$DR01_PIN"
       - name: Verify backend health
+        shell: bash
         run: |
+          set -euo pipefail
           sleep 5
-          curl -fsS "${{ steps.deploy.outputs.worker_url }}/api/health"
+          URL='${{ steps.deploy.outputs.worker_url }}'
+          curl -fsS "$URL/api/health"
+          STATUS=$(curl -sS -o /tmp/work-hours-probe.json -w '%{http_code}' "$URL/api/work-hours")
+          test "$STATUS" = "401"
+          jq -e '.error == "Session expired"' /tmp/work-hours-probe.json >/dev/null
+          echo "CRM and working-hours routes are live"
       - name: Update frontend runtime API URL
         shell: bash
         run: |
           set -euo pipefail
           URL='${{ steps.deploy.outputs.worker_url }}'
           mkdir -p public
-          printf 'window.LEAD_API_BASE = %s;\n' "$(printf '%s' "$URL" | jq -Rs .)" > public/runtime-config.js
+          {
+            printf 'window.LEAD_API_BASE = %s;\n' "$(printf '%s' "$URL" | jq -Rs .)"
+            printf 'window.WORK_HOURS_API_BASE = %s;\n' "$(printf '%s' "$URL" | jq -Rs .)"
+          } > public/runtime-config.js
           if git diff --quiet -- public/runtime-config.js; then exit 0; fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
