@@ -24,50 +24,30 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-
       - name: Verify Cloudflare credentials
         shell: bash
         run: |
           set -euo pipefail
-          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
-            echo "CLOUDFLARE_API_TOKEN is missing in GitHub Actions secrets"
-            exit 1
-          fi
-          if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
-            echo "CLOUDFLARE_ACCOUNT_ID (or R2_ACCOUNT_ID) is missing in GitHub Actions secrets"
-            exit 1
-          fi
-
+          [ -n "${CLOUDFLARE_API_TOKEN:-}" ] || { echo "CLOUDFLARE_API_TOKEN is missing"; exit 1; }
+          [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ] || { echo "CLOUDFLARE_ACCOUNT_ID is missing"; exit 1; }
       - name: Install Wrangler
         run: npm install --no-save wrangler@latest
-
       - name: Find or create D1 database
         id: d1
         shell: bash
         run: |
           set -euo pipefail
-          LIST=$(curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/d1/database?per_page=100")
+          LIST=$(curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/d1/database?per_page=100")
           DB_ID=$(echo "$LIST" | jq -r --arg NAME "$DB_NAME" '.result[]? | select(.name==$NAME) | .uuid' | head -n1)
           if [ -z "$DB_ID" ]; then
-            CREATE=$(curl -fsS -X POST \
-              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-              -H "Content-Type: application/json" \
-              --data "{\"name\":\"${DB_NAME}\"}" \
-              "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/d1/database")
+            CREATE=$(curl -fsS -X POST -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" -H "Content-Type: application/json" --data "{\"name\":\"${DB_NAME}\"}" "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/d1/database")
             DB_ID=$(echo "$CREATE" | jq -r '.result.uuid // empty')
           fi
-          if [ -z "$DB_ID" ]; then
-            echo "Unable to resolve D1 database id"
-            exit 1
-          fi
+          [ -n "$DB_ID" ] || { echo "Unable to resolve D1 database id"; exit 1; }
           echo "db_id=$DB_ID" >> "$GITHUB_OUTPUT"
-          echo "D1 ready: $DB_NAME"
-
       - name: Generate Wrangler config
         shell: bash
         run: |
@@ -76,16 +56,13 @@ jobs:
           main = "cloudflare/worker.js"
           compatibility_date = "2026-08-31"
           workers_dev = true
-
           [vars]
           FRONTEND_ORIGIN = "https://britsingh20-source.github.io"
-
           [[d1_databases]]
           binding = "DB"
           database_name = "${DB_NAME}"
           database_id = "${{ steps.d1.outputs.db_id }}"
           EOF
-
       - name: Initialize D1 schema
         shell: bash
         run: |
@@ -94,7 +71,7 @@ jobs:
           npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/team_roles.sql || true
           npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/dual_queue.sql || true
           npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/real_lead_intake.sql || true
-
+          npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/telecaller_sessions.sql
       - name: Deploy Worker
         id: deploy
         shell: bash
@@ -103,31 +80,18 @@ jobs:
           npx wrangler deploy --config wrangler.crm.toml | tee /tmp/wrangler-deploy.txt
           WORKER_URL=$(grep -Eo 'https://[^ ]+\.workers\.dev' /tmp/wrangler-deploy.txt | tail -n1 || true)
           if [ -z "$WORKER_URL" ]; then
-            SUBDOMAIN=$(curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-              "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/subdomain" | jq -r '.result.subdomain // empty')
-            if [ -n "$SUBDOMAIN" ]; then
-              WORKER_URL="https://${WORKER_NAME}.${SUBDOMAIN}.workers.dev"
-            fi
+            SUBDOMAIN=$(curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/subdomain" | jq -r '.result.subdomain // empty')
+            [ -z "$SUBDOMAIN" ] || WORKER_URL="https://${WORKER_NAME}.${SUBDOMAIN}.workers.dev"
           fi
-          if [ -z "$WORKER_URL" ]; then
-            echo "Unable to determine Worker URL"
-            exit 1
-          fi
+          [ -n "$WORKER_URL" ] || { echo "Unable to determine Worker URL"; exit 1; }
           echo "worker_url=$WORKER_URL" >> "$GITHUB_OUTPUT"
-          echo "Worker URL: $WORKER_URL"
-
       - name: Configure secure import token
         if: ${{ env.CRM_IMPORT_TOKEN != '' }}
-        shell: bash
         run: printf '%s' "$CRM_IMPORT_TOKEN" | npx wrangler secret put IMPORT_TOKEN --config wrangler.crm.toml
-
       - name: Verify backend health
-        shell: bash
         run: |
-          set -euo pipefail
           sleep 5
           curl -fsS "${{ steps.deploy.outputs.worker_url }}/api/health"
-
       - name: Update frontend runtime API URL
         shell: bash
         run: |
@@ -135,10 +99,7 @@ jobs:
           URL='${{ steps.deploy.outputs.worker_url }}'
           mkdir -p public
           printf 'window.LEAD_API_BASE = %s;\n' "$(printf '%s' "$URL" | jq -Rs .)" > public/runtime-config.js
-          if git diff --quiet -- public/runtime-config.js; then
-            echo "Runtime config already current"
-            exit 0
-          fi
+          if git diff --quiet -- public/runtime-config.js; then exit 0; fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add public/runtime-config.js
