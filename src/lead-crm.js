@@ -29,14 +29,18 @@ const DEMO_LEADS = [
 
 const STATUS_OPTIONS = ["Uncalled", "Interested", "Hot", "Follow-up", "Site Visit", "No Response", "Busy", "Not Interested", "Wrong Number", "Closed"];
 const STATUS_FILTERS = ["All", "Uncalled", "Hot", "Follow-up", "Site Visit", "No Response", "Closed"];
-
+function storedUser(){
+  const raw=localStorage.getItem("crm-current-user");
+  if(!raw)return "Telecaller 1";
+  try{const parsed=JSON.parse(raw);return parsed?.user_label||parsed?.label||raw;}catch{return raw;}
+}
 let areas = [];
 let leads = [];
 let currentArea = "ALL";
 let currentStatus = "All";
 let currentSearch = "";
 let selectedLead = null;
-let currentUser = localStorage.getItem("crm-current-user") || "Telecaller 1";
+let currentUser = storedUser();
 
 async function api(path, options = {}) {
   if (!API_BASE && location.hostname.includes("github.io")) throw new Error("API not configured");
@@ -120,155 +124,73 @@ function renderAreas() {
   });
 }
 
-function formatDate(value) {
-  if (!value) return "—";
-  return new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
-}
-
-function statusClass(status) {
-  return String(status || "").toLowerCase().replaceAll(" ", "-");
-}
-
 function renderLeadList() {
   const visible = filteredLeads();
-  document.querySelector("#crm-list-title").textContent = currentArea === "ALL" ? "All lead records" : `${areaName(currentArea)} leads`;
-  document.querySelector("#crm-list-count").textContent = `${visible.length} shown`;
-  document.querySelector("#crm-lead-list").innerHTML = visible.length ? visible.map((lead) => `
-    <article class="crm-lead-row" data-open-lead="${lead.id}">
-      <div class="crm-lead-primary"><span class="crm-lead-code">${lead.lead_code || "Pending code"}</span><div><b>${lead.name || "Unnamed lead"}</b><small>${lead.requirement || "Requirement not added"}</small></div></div>
-      <div class="crm-phone"><a href="tel:${lead.phone}" data-call-lead="${lead.id}">☎ ${lead.phone}</a><small>${areaName(lead.area_code)}</small></div>
-      <div><span class="crm-status ${statusClass(lead.status)}">${lead.status || "Uncalled"}</span><small>${lead.assigned_to || "Unassigned"}</small></div>
-      <div><b>${formatDate(lead.last_contact_at)}</b><small>Last contact</small></div>
-      <button class="crm-open">Open →</button>
-    </article>`).join("") : '<div class="crm-empty"><b>No leads in this view</b><small>Change the area, status or search filter.</small></div>';
-
-  document.querySelectorAll("[data-open-lead]").forEach((row) => row.onclick = (event) => {
-    if (event.target.closest("a")) return;
-    openLead(row.dataset.openLead);
-  });
-  document.querySelectorAll("[data-call-lead]").forEach((link) => link.onclick = async () => {
-    const lead = leads.find((item) => String(item.id) === link.dataset.callLead);
-    if (!lead) return;
-    if (!lead.assigned_to) {
-      lead.assigned_to = currentUser;
-      lead.last_contact_at = new Date().toISOString();
-      saveDemo();
-      try { await api(`/api/leads/${lead.id}/claim`, { method: "POST", body: JSON.stringify({ assigned_to: currentUser }) }); } catch (_) {}
-      renderAll();
-    }
-  });
+  document.querySelector("#crm-lead-count").textContent = `${visible.length} leads`;
+  document.querySelector("#crm-lead-list").innerHTML = visible.map((lead) => `
+    <article class="crm-lead-row" data-lead="${lead.id}">
+      <div><b>${lead.name || "Unknown"}</b><small>${lead.lead_code || "No code"} · ${lead.phone}</small></div>
+      <span>${areaName(lead.area_code)}</span><span class="crm-status ${String(lead.status).toLowerCase().replace(/\s+/g, "-")}">${lead.status}</span>
+      <button data-open-lead="${lead.id}">Open →</button>
+    </article>`).join("") || `<div class="crm-empty">No leads match this filter.</div>`;
+  document.querySelectorAll("[data-open-lead]").forEach((button) => button.onclick = () => openLead(button.dataset.openLead));
 }
 
 function openLead(id) {
   selectedLead = leads.find((lead) => String(lead.id) === String(id));
   if (!selectedLead) return;
-  const modal = document.querySelector("#crm-lead-modal");
-  document.querySelector("#crm-modal-code").textContent = selectedLead.lead_code || "Pending area code";
-  document.querySelector("#crm-modal-name").textContent = selectedLead.name || "Unnamed lead";
-  document.querySelector("#crm-modal-phone").textContent = selectedLead.phone;
-  document.querySelector("#crm-modal-phone").href = "tel:" + selectedLead.phone;
-  document.querySelector("#crm-modal-area").value = selectedLead.area_code || "";
-  document.querySelector("#crm-modal-status").value = selectedLead.status || "Uncalled";
-  document.querySelector("#crm-modal-notes").value = selectedLead.notes || "";
-  document.querySelector("#crm-modal-requirement").value = selectedLead.requirement || "";
-  document.querySelector("#crm-modal-followup").value = selectedLead.follow_up_at ? selectedLead.follow_up_at.slice(0, 16) : "";
-  document.querySelector("#crm-modal-assigned").textContent = selectedLead.assigned_to || "Not assigned";
-  document.querySelector("#crm-modal-history").innerHTML = `
-    <div><i></i><b>Lead received</b><small>${formatDate(selectedLead.first_received_at)}</small></div>
-    ${selectedLead.last_contact_at ? `<div><i></i><b>Last contacted</b><small>${formatDate(selectedLead.last_contact_at)} · ${selectedLead.assigned_to || "Team"}</small></div>` : ""}`;
+  const modal = document.querySelector("#crm-lead-dialog");
+  document.querySelector("#crm-dialog-content").innerHTML = `
+    <div class="crm-dialog-head"><div><small>${selectedLead.lead_code || "UNASSIGNED"}</small><h3>${selectedLead.name || "Unknown customer"}</h3><a href="tel:${selectedLead.phone}">☎ ${selectedLead.phone}</a></div><span>${selectedLead.status}</span></div>
+    <div class="crm-dialog-grid"><p><small>Area</small><b>${areaName(selectedLead.area_code)}</b></p><p><small>Assigned to</small><b>${selectedLead.assigned_to || "Unassigned"}</b></p><p><small>Requirement</small><b>${selectedLead.requirement || "—"}</b></p><p><small>Last contact</small><b>${selectedLead.last_contact_at || "Never"}</b></p></div>
+    <label>Status<select id="crm-dialog-status">${STATUS_OPTIONS.map((option) => `<option ${option === selectedLead.status ? "selected" : ""}>${option}</option>`).join("")}</select></label>
+    <label>Notes<textarea id="crm-dialog-notes" rows="4">${selectedLead.notes || ""}</textarea></label>
+    <label>Follow-up<input id="crm-dialog-followup" type="datetime-local" value="${selectedLead.follow_up_at ? selectedLead.follow_up_at.slice(0, 16) : ""}"></label>
+    <div class="crm-dialog-actions"><button data-crm-close>Cancel</button><button id="crm-save-lead" class="primary">Save Lead</button></div>`;
   modal.showModal();
+  modal.querySelector("[data-crm-close]").onclick = () => modal.close();
+  modal.querySelector("#crm-save-lead").onclick = saveSelectedLead;
 }
 
-async function saveLeadFeedback(event) {
-  event.preventDefault();
+async function saveSelectedLead() {
   if (!selectedLead) return;
-  const areaCode = document.querySelector("#crm-modal-area").value;
-  const status = document.querySelector("#crm-modal-status").value;
-  const notes = document.querySelector("#crm-modal-notes").value.trim();
-  const requirement = document.querySelector("#crm-modal-requirement").value.trim();
-  const followup = document.querySelector("#crm-modal-followup").value;
-  selectedLead.area_code = areaCode;
-  selectedLead.status = status;
-  selectedLead.notes = notes;
-  selectedLead.requirement = requirement;
-  selectedLead.follow_up_at = followup ? new Date(followup).toISOString() : null;
-  selectedLead.last_contact_at = new Date().toISOString();
-  selectedLead.assigned_to = selectedLead.assigned_to || currentUser;
-  saveDemo();
+  const payload = {
+    status: document.querySelector("#crm-dialog-status").value,
+    notes: document.querySelector("#crm-dialog-notes").value,
+    follow_up_at: document.querySelector("#crm-dialog-followup").value || null,
+    assigned_to: currentUser
+  };
   try {
-    const result = await api(`/api/leads/${selectedLead.id}/activity`, {
-      method: "POST",
-      body: JSON.stringify({ area_code: areaCode, status, notes, requirement, follow_up_at: selectedLead.follow_up_at, caller: currentUser })
-    });
-    if (result.lead) Object.assign(selectedLead, result.lead);
-  } catch (_) {}
-  document.querySelector("#crm-lead-modal").close();
-  renderAll();
-}
-
-function renderFilters() {
-  document.querySelector("#crm-status-filters").innerHTML = STATUS_FILTERS.map((status) =>
-    `<button data-status-filter="${status}" class="${currentStatus === status ? "active" : ""}">${status}</button>`
-  ).join("");
-  document.querySelectorAll("[data-status-filter]").forEach((button) => button.onclick = () => {
-    currentStatus = button.dataset.statusFilter;
+    if (!String(selectedLead.id).startsWith("demo-")) await api(`/api/leads/${selectedLead.id}`, { method: "PATCH", body: JSON.stringify(payload) });
+    Object.assign(selectedLead, payload, { last_contact_at: new Date().toISOString() });
+    saveDemo();
+    document.querySelector("#crm-lead-dialog").close();
     renderAll();
+  } catch (error) { alert("Could not save lead: " + error.message); }
+}
+
+function renderAll() { renderDashboard(); renderAreas(); renderLeadList(); }
+
+function mountCRM() {
+  const adminContent = document.querySelector(".admin-content");
+  const overview = document.querySelector("#admin-overview");
+  if (!adminContent || !overview || document.querySelector("#admin-leads")) return;
+  const userOptions = ["Telecaller 1", "Telecaller 2", "Manager 1", "Manager 2", "Administrator", "Director"];
+  overview.insertAdjacentHTML("afterend", `<section id="admin-leads" class="admin-section crm-section"><div class="crm-head"><div><small>LIVE CRM</small><h2>Lead workspace</h2></div><div><span id="crm-live-indicator"><i></i> Connecting…</span><select id="crm-user-select">${userOptions.map((user) => `<option ${user === currentUser ? "selected" : ""}>${user}</option>`).join("")}</select></div></div><div id="crm-team-flow"></div><div id="crm-kpis" class="crm-kpis"></div><div class="crm-area-head"><div><small>AREA-FIRST PIPELINE</small><h3>Lead Map by Area</h3></div><button id="crm-show-all-areas">All Areas</button></div><div id="crm-area-grid" class="crm-area-grid"></div><div class="crm-toolbar"><div>${STATUS_FILTERS.map((status) => `<button data-status="${status}" class="${status === currentStatus ? "active" : ""}">${status}</button>`).join("")}</div><input id="crm-search" placeholder="Search phone, customer or requirement"></div><div class="crm-list-head"><h3>Customers</h3><span id="crm-lead-count"></span></div><div id="crm-lead-list"></div></section>`);
+  document.querySelector(".admin-segments").insertAdjacentHTML("beforeend", `<button data-admin-section="leads"><span>☎</span>Leads</button>`);
+  document.querySelector("#crm-user-select").onchange = (event) => { currentUser = event.target.value; localStorage.setItem("crm-current-user", JSON.stringify({user_label:currentUser})); window.dispatchEvent(new CustomEvent("crm-user-changed", { detail: { user: currentUser } })); };
+  document.querySelector("#crm-show-all-areas").onclick = () => { currentArea = "ALL"; renderAll(); };
+  document.querySelectorAll("[data-status]").forEach((button) => button.onclick = () => { currentStatus = button.dataset.status; document.querySelectorAll("[data-status]").forEach((item) => item.classList.toggle("active", item === button)); renderAll(); });
+  document.querySelector("#crm-search").oninput = (event) => { currentSearch = event.target.value; renderLeadList(); };
+  document.querySelectorAll("[data-admin-section]").forEach((button) => {
+    if (button.dataset.adminSection === "leads") button.onclick = () => {
+      document.querySelectorAll(".admin-section").forEach((section) => section.classList.toggle("active", section.id === "admin-leads"));
+      document.querySelectorAll("[data-admin-section]").forEach((item) => item.classList.toggle("active", item === button));
+      document.querySelector(".admin-content").scrollTop = 0;
+    };
   });
-}
-
-function renderAll() {
-  renderDashboard();
-  renderAreas();
-  renderFilters();
-  renderLeadList();
-}
-
-function buildCRM() {
-  const nav = document.querySelector(".admin-segments");
-  const content = document.querySelector(".admin-content");
-  if (!nav || !content || document.querySelector("[data-admin-section='leads']")) return;
-  nav.insertAdjacentHTML("beforeend", '<button data-admin-section="leads"><span>☏</span>Leads</button>');
-  content.insertAdjacentHTML("beforeend", `
-    <section id="admin-leads" class="admin-section crm-section">
-      <div class="crm-header"><div><small>LEAD COMMAND CENTER</small><h2>Telecalling & Area Leads</h2><p>Area-first lead management with assignment, feedback and follow-up tracking.</p></div><div class="crm-userbox"><span id="crm-live-indicator"><i></i> Connecting…</span><label>Working as<select id="crm-user-select"><option>Telecaller 1</option><option>Telecaller 2</option><option>Telecaller 3</option><option>Telecaller 4</option><option>Manager</option><option>Administrator</option></select></label></div></div>
-      <div id="crm-kpis" class="crm-kpis"></div>
-      <div class="crm-area-head"><div><small>AREA LEAD MAP</small><h3>Choose an area</h3></div><button id="crm-clear-area">Show all areas</button></div>
-      <div id="crm-area-grid" class="crm-area-grid"></div>
-      <div class="crm-toolbar"><div id="crm-status-filters" class="crm-status-filters"></div><label class="crm-search">⌕ <input id="crm-search" type="search" placeholder="Search name, phone, lead ID…"></label></div>
-      <div class="crm-list-head"><div><small>LEAD LIST</small><h3 id="crm-list-title">All lead records</h3></div><span id="crm-list-count"></span></div>
-      <div id="crm-lead-list" class="crm-lead-list"></div>
-      <dialog id="crm-lead-modal" class="crm-modal">
-        <button class="crm-modal-close" type="button">×</button>
-        <div class="crm-modal-head"><span id="crm-modal-code"></span><h2 id="crm-modal-name"></h2><a id="crm-modal-phone"></a><small>Assigned to: <b id="crm-modal-assigned"></b></small></div>
-        <form id="crm-feedback-form"><div class="crm-form-grid">
-          <label>Area<select id="crm-modal-area">${DEMO_AREAS.map((area) => `<option value="${area.code}">${area.code} · ${area.name}</option>`).join("")}</select></label>
-          <label>Call result<select id="crm-modal-status">${STATUS_OPTIONS.map((status) => `<option>${status}</option>`).join("")}</select></label>
-          <label class="wide">Requirement<input id="crm-modal-requirement" placeholder="Example: 3 cents, ₹50–55L, ready to move"></label>
-          <label>Next follow-up<input id="crm-modal-followup" type="datetime-local"></label>
-          <label class="wide">Feedback / notes<textarea id="crm-modal-notes" rows="4" placeholder="What did the customer say?"></textarea></label>
-        </div><div class="crm-modal-actions"><button type="button" class="crm-cancel">Cancel</button><button type="submit">Save feedback</button></div></form>
-        <div class="crm-history"><small>ACTIVITY</small><div id="crm-modal-history"></div></div>
-      </dialog>
-    </section>`);
-
-  document.querySelector("#crm-user-select").value = currentUser;
-  document.querySelector("#crm-user-select").onchange = (event) => {
-    currentUser = event.target.value;
-    localStorage.setItem("crm-current-user", currentUser);
-  };
-  document.querySelector("#crm-clear-area").onclick = () => { currentArea = "ALL"; renderAll(); };
-  document.querySelector("#crm-search").oninput = (event) => { currentSearch = event.target.value.trim(); renderLeadList(); };
-  document.querySelector("#crm-feedback-form").onsubmit = saveLeadFeedback;
-  document.querySelector(".crm-modal-close").onclick = () => document.querySelector("#crm-lead-modal").close();
-  document.querySelector(".crm-cancel").onclick = () => document.querySelector("#crm-lead-modal").close();
-
-  const leadNav = document.querySelector("[data-admin-section='leads']");
-  leadNav.onclick = () => {
-    document.querySelectorAll(".admin-section").forEach((section) => section.classList.toggle("active", section.id === "admin-leads"));
-    document.querySelectorAll("[data-admin-section]").forEach((button) => button.classList.toggle("active", button.dataset.adminSection === "leads"));
-    document.querySelector(".admin-content").scrollTop = 0;
-  };
+  document.body.insertAdjacentHTML("beforeend", `<dialog id="crm-lead-dialog" class="crm-lead-dialog"><div id="crm-dialog-content"></div></dialog>`);
   loadData();
 }
 
-window.setTimeout(buildCRM, 0);
+mountCRM();
