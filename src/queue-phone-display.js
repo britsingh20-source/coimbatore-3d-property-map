@@ -28,14 +28,22 @@ function renderPhones(){
       const info=card.querySelector("div");
       if(info)info.insertBefore(line,info.querySelector("em")||null);
     }
-    line.href=`tel:${String(lead.phone||phone).replace(/\s/g,"")}`;
-    line.textContent=`☎ ${phone}`;
-    line.setAttribute("aria-label",`Call ${phone}`);
+    const href=`tel:${String(lead.phone||phone).replace(/\s/g,"")}`;
+    const text=`☎ ${phone}`;
+    if(line.getAttribute("href")!==href) line.setAttribute("href",href);
+    if(line.textContent!==text) line.textContent=text;
+    const aria=`Call ${phone}`;
+    if(line.getAttribute("aria-label")!==aria) line.setAttribute("aria-label",aria);
   });
 }
 const style=document.createElement("style");
 style.textContent=`.queue-visible-phone{display:block;margin:6px 0 4px;color:#075f50;font-size:17px;font-weight:900;text-decoration:none;letter-spacing:.02em}.queue-visible-phone:active{opacity:.7}@media(max-width:600px){.queue-visible-phone{font-size:18px;padding:3px 0}}`;
 document.head.appendChild(style);
-const observer=new MutationObserver(()=>renderPhones());
+let scheduled=false;
+const observer=new MutationObserver(()=>{
+  if(scheduled)return;
+  scheduled=true;
+  requestAnimationFrame(()=>{scheduled=false;renderPhones();});
+});
 observer.observe(document.body,{subtree:true,childList:true});
 window.addEventListener("crm-session-login",()=>setTimeout(renderPhones,250));
