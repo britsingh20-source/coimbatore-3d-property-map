@@ -133,13 +133,15 @@ jobs:
         run: |
           set -euo pipefail
           URL='${{ steps.deploy.outputs.worker_url }}'
-          printf 'window.LEAD_API_BASE = %s;\n' "$(printf '%s' "$URL" | jq -Rs .)" > src/runtime-config.js
-          if git diff --quiet -- src/runtime-config.js; then
+          mkdir -p public
+          printf 'window.LEAD_API_BASE = %s;\n' "$(printf '%s' "$URL" | jq -Rs .)" > public/runtime-config.js
+          if git diff --quiet -- public/runtime-config.js; then
             echo "Runtime config already current"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/runtime-config.js
+          git add public/runtime-config.js
           git commit -m "Connect CRM frontend to Cloudflare Worker"
+          git pull --rebase origin main
           git push origin HEAD:main
