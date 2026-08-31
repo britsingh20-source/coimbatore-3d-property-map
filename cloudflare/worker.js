@@ -14,161 +14,119 @@ function normalizePhone(value = "") {
   if (plus && !digits.startsWith("91")) return "+" + digits;
   return digits;
 }
-
-function bearer(request) {
-  const value = request.headers.get("authorization") || "";
-  return value.startsWith("Bearer ") ? value.slice(7) : "";
-}
-
-function needsFullDetails(status) {
-  return ["Categorized", "Interested", "Hot", "Follow-up", "Site Visit"].includes(status);
-}
-
+function bearer(request) { const v=request.headers.get("authorization")||""; return v.startsWith("Bearer ")?v.slice(7):""; }
+function needsFullDetails(status) { return ["Categorized","Interested","Hot","Follow-up","Site Visit"].includes(status); }
 function validateCompletion(body) {
-  const status = String(body.status || "").trim();
-  if (!status) return "Call result is required";
-  if (needsFullDetails(status)) {
-    if (!String(body.name || "").trim()) return "Customer name is required";
-    if (!String(body.area_text || body.area_code || "").trim()) return "Customer area / preferred location is required";
-    if (!String(body.property_type || "").trim()) return "Property type is required";
-    if (!String(body.budget || "").trim()) return "Budget is required";
-    if (!String(body.requirement || "").trim()) return "Requirement is required";
-    if (!String(body.notes || "").trim()) return "Call notes are required";
+  const status=String(body.status||"").trim(); if(!status)return "Call result is required";
+  if(needsFullDetails(status)) {
+    if(!String(body.name||"").trim())return "Customer name is required";
+    if(!String(body.area_text||body.area_code||"").trim())return "Customer area / preferred location is required";
+    if(!String(body.property_type||"").trim())return "Property type is required";
+    if(!String(body.budget||"").trim())return "Budget is required";
+    if(!String(body.requirement||"").trim())return "Requirement is required";
+    if(!String(body.notes||"").trim())return "Call notes are required";
   }
-  if (status === "Follow-up" && !body.follow_up_at) return "Follow-up date and time is required";
+  if(status==="Follow-up"&&!body.follow_up_at)return "Follow-up date and time is required";
   return null;
 }
+function indiaDateKey(value=new Date()) { return new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Kolkata",year:"numeric",month:"2-digit",day:"2-digit"}).format(value); }
+function dayNumber(key){const [y,m,d]=key.split("-").map(Number);return Math.floor(Date.UTC(y,m-1,d)/86400000);}
+function queueForTelecaller(label,key=indiaDateKey()){const idx=label==="Telecaller 1"?0:label==="Telecaller 2"?1:-1;return idx<0?null:(idx===dayNumber(key)%2?"fresh":"backlog");}
+async function getLead(db,id){return db.prepare("SELECT * FROM leads WHERE id=?").bind(id).first();}
+async function allocateLeadCode(db,areaCode){if(!areaCode)return null;const row=await db.prepare("UPDATE area_counters SET last_number=last_number+1 WHERE area_code=? RETURNING last_number").bind(areaCode).first();return row?`${areaCode}-${String(row.last_number).padStart(4,"0")}`:null;}
 
-async function getLead(db, id) {
-  return db.prepare("SELECT * FROM leads WHERE id=?").bind(id).first();
-}
-
-async function allocateLeadCode(db, areaCode) {
-  if (!areaCode) return null;
-  const row = await db.prepare("UPDATE area_counters SET last_number=last_number+1 WHERE area_code=? RETURNING last_number")
-    .bind(areaCode).first();
-  if (!row) return null;
-  return `${areaCode}-${String(row.last_number).padStart(4, "0")}`;
-}
-
-async function upsertImportedLead(db, lead) {
-  const phone = normalizePhone(lead.phone || lead.display_phone);
-  if (!phone) return { skipped: true, reason: "invalid_phone" };
-  const existing = await db.prepare("SELECT id FROM leads WHERE phone=?").bind(phone).first();
-  const source = Array.isArray(lead.source) ? lead.source.join(", ") : (lead.source || "Historical import");
-  const status = lead.status || "Uncalled";
-  if (existing) {
-    await db.prepare(`UPDATE leads SET
-      name=COALESCE(?,name), status=?, requirement=COALESCE(?,requirement), notes=COALESCE(?,notes),
-      source=?, first_received_at=COALESCE(?,first_received_at), last_received_at=COALESCE(?,last_received_at),
-      area_text=COALESCE(?,area_text), property_type=COALESCE(?,property_type), budget=COALESCE(?,budget),
-      source_period_start=COALESCE(?,source_period_start), source_period_end=COALESCE(?,source_period_end),
-      date_precision=COALESCE(?,date_precision), transcription_review=MAX(transcription_review,?), updated_at=CURRENT_TIMESTAMP
-      WHERE id=?`)
-      .bind(lead.name || null, status, lead.requirement || null, lead.notes || null, source,
-        lead.first_received_at || null, lead.last_received_at || null, lead.area_text || null,
-        lead.property_type || null, lead.budget || null, lead.source_period_start || null,
-        lead.source_period_end || null, lead.date_precision || null, lead.transcription_review ? 1 : 0, existing.id).run();
-    return { id: existing.id, duplicate: true };
+async function sessionFor(request,env,{touch=false}={}){
+  const token=bearer(request); if(!token)return null;
+  let s=await env.DB.prepare("SELECT * FROM telecaller_sessions WHERE token=? AND active=1").bind(token).first();
+  if(!s)return null;
+  const now=Date.now(), last=Date.parse(String(s.last_activity_at).replace(" ","T")+"Z"), callStarted=s.call_started_at?Date.parse(String(s.call_started_at).replace(" ","T")+"Z"):0;
+  const idleMs=now-last;
+  const callExpired=s.call_active && callStarted && now-callStarted>60*60*1000;
+  if((!s.call_active && idleMs>10*60*1000)||callExpired){
+    await env.DB.prepare("UPDATE telecaller_sessions SET active=0,logout_at=CURRENT_TIMESTAMP,logout_reason=? WHERE token=?").bind(callExpired?"call_timeout":"idle_10_minutes",token).run();
+    return null;
   }
-  const result = await db.prepare(`INSERT INTO leads(
-    phone,display_phone,name,status,requirement,notes,source,first_received_at,last_received_at,
-    area_text,property_type,budget,source_period_start,source_period_end,date_precision,transcription_review,pipeline_stage)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`)
-    .bind(phone, lead.display_phone || lead.phone || phone, lead.name || null, status, lead.requirement || null,
-      lead.notes || null, source, lead.first_received_at || new Date().toISOString(), lead.last_received_at || lead.first_received_at || new Date().toISOString(),
-      lead.area_text || null, lead.property_type || null, lead.budget || null, lead.source_period_start || null,
-      lead.source_period_end || null, lead.date_precision || "exact", lead.transcription_review ? 1 : 0,
-      status === "Categorized" ? "manager_queue" : "incoming").first();
-  return { id: result.id, duplicate: false };
+  if(touch){await env.DB.prepare("UPDATE telecaller_sessions SET last_activity_at=CURRENT_TIMESTAMP WHERE token=?").bind(token).run();s=await env.DB.prepare("SELECT * FROM telecaller_sessions WHERE token=?").bind(token).first();}
+  return s;
+}
+async function requireSession(request,env,touch=true){const s=await sessionFor(request,env,{touch});return s||null;}
+
+async function upsertImportedLead(db,lead){
+  const phone=normalizePhone(lead.phone||lead.display_phone);if(!phone)return{skipped:true,reason:"invalid_phone"};
+  const existing=await db.prepare("SELECT id FROM leads WHERE phone=?").bind(phone).first();
+  const source=Array.isArray(lead.source)?lead.source.join(", "):(lead.source||"Historical import"); const status=lead.status||"Uncalled";
+  if(existing){await db.prepare(`UPDATE leads SET name=COALESCE(?,name),status=?,requirement=COALESCE(?,requirement),notes=COALESCE(?,notes),source=?,first_received_at=COALESCE(?,first_received_at),last_received_at=COALESCE(?,last_received_at),area_text=COALESCE(?,area_text),property_type=COALESCE(?,property_type),budget=COALESCE(?,budget),source_period_start=COALESCE(?,source_period_start),source_period_end=COALESCE(?,source_period_end),date_precision=COALESCE(?,date_precision),transcription_review=MAX(transcription_review,?),updated_at=CURRENT_TIMESTAMP WHERE id=?`).bind(lead.name||null,status,lead.requirement||null,lead.notes||null,source,lead.first_received_at||null,lead.last_received_at||null,lead.area_text||null,lead.property_type||null,lead.budget||null,lead.source_period_start||null,lead.source_period_end||null,lead.date_precision||null,lead.transcription_review?1:0,existing.id).run();return{id:existing.id,duplicate:true};}
+  const result=await db.prepare(`INSERT INTO leads(phone,display_phone,name,status,requirement,notes,source,first_received_at,last_received_at,area_text,property_type,budget,source_period_start,source_period_end,date_precision,transcription_review,pipeline_stage) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`).bind(phone,lead.display_phone||lead.phone||phone,lead.name||null,status,lead.requirement||null,lead.notes||null,source,lead.first_received_at||new Date().toISOString(),lead.last_received_at||lead.first_received_at||new Date().toISOString(),lead.area_text||null,lead.property_type||null,lead.budget||null,lead.source_period_start||null,lead.source_period_end||null,lead.date_precision||"exact",lead.transcription_review?1:0,status==="Categorized"?"manager_queue":"incoming").first();return{id:result.id,duplicate:false};
 }
 
-export default {
-  async fetch(request, env) {
-    if (request.method === "OPTIONS") return new Response(null, { headers: {
-      "access-control-allow-origin": allowedOrigin(env),
-      "access-control-allow-methods": "GET,POST,PATCH,OPTIONS",
-      "access-control-allow-headers": "content-type,authorization"
-    }});
-    const url = new URL(request.url);
-    const path = url.pathname.replace(/\/$/, "") || "/";
-    try {
-      if (request.method === "GET" && path === "/api/health") return json({ ok:true, service:"lead-crm", secureImport:true }, 200, env);
-
-      if (request.method === "POST" && path === "/api/admin/import") {
-        if (!env.IMPORT_TOKEN || bearer(request) !== env.IMPORT_TOKEN) return json({ error:"Unauthorized" }, 401, env);
-        const body = await request.json();
-        const rows = Array.isArray(body.leads) ? body.leads : [];
-        if (!rows.length) return json({ error:"No leads supplied" }, 400, env);
-        let inserted=0, updated=0, skipped=0;
-        for (const lead of rows) {
-          const result = await upsertImportedLead(env.DB, lead);
-          if (result.skipped) skipped++; else if (result.duplicate) updated++; else inserted++;
-          if (!result.skipped) await env.DB.prepare("INSERT INTO lead_activity(lead_id,activity_type,notes) VALUES(?, 'historical_import', ?)")
-            .bind(result.id, "Imported from historical lead register").run();
-        }
-        return json({ ok:true, inserted, updated, skipped }, 200, env);
-      }
-
-      if (request.method === "GET" && path === "/api/areas") {
-        const result = await env.DB.prepare(`SELECT a.code,a.name,COUNT(l.id) total,
-          SUM(CASE WHEN l.status='Hot' THEN 1 ELSE 0 END) hot,
-          SUM(CASE WHEN l.status='Follow-up' THEN 1 ELSE 0 END) follow_up,
-          SUM(CASE WHEN l.status IN ('Uncalled','No Response','Busy','Needs Review') THEN 1 ELSE 0 END) uncalled
-          FROM areas a LEFT JOIN leads l ON l.area_code=a.code WHERE a.active=1 GROUP BY a.code,a.name ORDER BY a.name`).all();
-        return json({ areas:result.results || [] }, 200, env);
-      }
-
-      if (request.method === "GET" && path === "/api/leads") {
-        const clauses=[], params=[];
-        for (const [key,col] of [["area","area_code"],["status","status"],["telecaller","telecaller_assigned_to"],["manager","manager_assigned_to"]]) {
-          const v=url.searchParams.get(key); if (v) { clauses.push(`${col}=?`); params.push(v); }
-        }
-        const q=url.searchParams.get("q");
-        if (q) { const like=`%${q}%`; clauses.push("(lead_code LIKE ? OR name LIKE ? OR phone LIKE ? OR requirement LIKE ? OR area_text LIKE ?)"); params.push(like,like,like,like,like); }
-        const where=clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-        const result=await env.DB.prepare(`SELECT * FROM leads ${where} ORDER BY first_received_at DESC,id DESC`).bind(...params).all();
-        return json({ leads:result.results || [] }, 200, env);
-      }
-
-      const claimMatch=path.match(/^\/api\/leads\/(\d+)\/claim$/);
-      if (request.method === "POST" && claimMatch) {
-        const id=Number(claimMatch[1]); const body=await request.json(); const caller=String(body.assigned_to || "").trim();
-        if (!caller) return json({ error:"Telecaller is required" },400,env);
-        const result=await env.DB.prepare(`UPDATE leads SET telecaller_assigned_to=?,pipeline_stage='telecaller_claimed',updated_at=CURRENT_TIMESTAMP
-          WHERE id=? AND (telecaller_assigned_to IS NULL OR telecaller_assigned_to=?) AND pipeline_stage IN ('incoming','telecaller_claimed') RETURNING id`).bind(caller,id,caller).first();
-        if (!result) return json({ error:"Lead already claimed or unavailable", lead:await getLead(env.DB,id) },409,env);
-        await env.DB.prepare("INSERT INTO lead_activity(lead_id,activity_type,caller,notes) VALUES(?, 'claimed', ?, 'Lead claimed for first contact')").bind(id,caller).run();
-        return json({ lead:await getLead(env.DB,id) },200,env);
-      }
-
-      const completeMatch=path.match(/^\/api\/leads\/(\d+)\/complete-call$/);
-      if (request.method === "POST" && completeMatch) {
-        const id=Number(completeMatch[1]); const body=await request.json();
-        const validation=validateCompletion(body); if (validation) return json({ error:validation },422,env);
-        const current=await getLead(env.DB,id); if (!current) return json({ error:"Lead not found" },404,env);
-        let leadCode=current.lead_code;
-        if (!leadCode && body.area_code) leadCode=await allocateLeadCode(env.DB,body.area_code);
-        const terminal=["No Response","Busy","Not Interested","Wrong Number"].includes(body.status);
-        const categorized=needsFullDetails(body.status);
-        const stage=categorized ? "manager_queue" : (terminal ? "incoming" : current.pipeline_stage || "incoming");
-        await env.DB.prepare(`UPDATE leads SET lead_code=?,name=?,area_code=COALESCE(?,area_code),area_text=?,property_type=?,budget=?,status=?,requirement=?,notes=?,follow_up_at=?,
-          last_contact_at=CURRENT_TIMESTAMP,contacted_at=CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE contacted_at END,contact_complete=?,pipeline_stage=?,categorized_at=CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE categorized_at END,
-          manager_handoff_at=CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE manager_handoff_at END,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
-          .bind(leadCode,body.name || current.name || null,body.area_code || null,body.area_text || null,body.property_type || null,body.budget || null,body.status,
-            body.requirement || null,body.notes || null,body.follow_up_at || null,categorized ? 1:0,categorized ? 1:0,stage,categorized ? 1:0,categorized ? 1:0,id).run();
-        await env.DB.prepare(`INSERT INTO lead_activity(lead_id,activity_type,caller,status,area_code,notes,requirement,follow_up_at)
-          VALUES(?, 'call_completed', ?, ?, ?, ?, ?, ?)`).bind(id,body.caller || null,body.status,body.area_code || null,body.notes || null,body.requirement || null,body.follow_up_at || null).run();
-        return json({ lead:await getLead(env.DB,id), completed:categorized },200,env);
-      }
-
-      const detailMatch=path.match(/^\/api\/leads\/(\d+)$/);
-      if (request.method === "GET" && detailMatch) {
-        const id=Number(detailMatch[1]); const lead=await getLead(env.DB,id); if (!lead) return json({ error:"Lead not found" },404,env);
-        const activity=await env.DB.prepare("SELECT * FROM lead_activity WHERE lead_id=? ORDER BY created_at DESC,id DESC").bind(id).all();
-        return json({ lead,activity:activity.results || [] },200,env);
-      }
-      return json({ error:"Not found" },404,env);
-    } catch (error) { return json({ error:error.message || "Server error" },500,env); }
+async function currentBatch(env,user){
+  let rows=(await env.DB.prepare(`SELECT * FROM leads WHERE telecaller_assigned_to=? AND contact_complete=0 AND status IN ('Uncalled','No Response','Busy','Needs Review') ORDER BY first_received_at,id LIMIT 10`).bind(user).all()).results||[];
+  if(rows.length>=10)return rows;
+  const need=10-rows.length; const today=indiaDateKey(); const preferred=queueForTelecaller(user,today);
+  const condition=preferred==="fresh"?"substr(first_received_at,1,10)=?":"substr(first_received_at,1,10)<?";
+  let added=(await env.DB.prepare(`UPDATE leads SET telecaller_assigned_to=?,pipeline_stage='telecaller_claimed',updated_at=CURRENT_TIMESTAMP WHERE id IN (SELECT id FROM leads WHERE telecaller_assigned_to IS NULL AND contact_complete=0 AND status IN ('Uncalled','No Response','Busy','Needs Review') AND ${condition} ORDER BY first_received_at,id LIMIT ?) RETURNING *`).bind(user,today,need).all()).results||[];
+  if(added.length<need){
+    const remain=need-added.length;
+    const extra=(await env.DB.prepare(`UPDATE leads SET telecaller_assigned_to=?,pipeline_stage='telecaller_claimed',updated_at=CURRENT_TIMESTAMP WHERE id IN (SELECT id FROM leads WHERE telecaller_assigned_to IS NULL AND contact_complete=0 AND status IN ('Uncalled','No Response','Busy','Needs Review') ORDER BY first_received_at,id LIMIT ?) RETURNING *`).bind(user,remain).all()).results||[];
+    added=added.concat(extra);
   }
-};
+  for(const lead of added)await env.DB.prepare("INSERT INTO lead_activity(lead_id,activity_type,caller,notes) VALUES(?, 'batch_assigned', ?, 'Assigned in current batch of 10')").bind(lead.id,user).run();
+  rows=rows.concat(added).sort((a,b)=>String(a.first_received_at).localeCompare(String(b.first_received_at))).slice(0,10);return rows;
+}
+
+export default { async fetch(request,env){
+  if(request.method==="OPTIONS")return new Response(null,{headers:{"access-control-allow-origin":allowedOrigin(env),"access-control-allow-methods":"GET,POST,PATCH,OPTIONS","access-control-allow-headers":"content-type,authorization"}});
+  const url=new URL(request.url),path=url.pathname.replace(/\/$/,"")||"/";
+  try{
+    if(request.method==="GET"&&path==="/api/health")return json({ok:true,service:"lead-crm",secureImport:true,timedSessions:true},200,env);
+
+    if(request.method==="POST"&&path==="/api/session/login"){
+      const body=await request.json();const user=String(body.user_label||"").trim();
+      if(!["Telecaller 1","Telecaller 2"].includes(user))return json({error:"Invalid telecaller"},400,env);
+      await env.DB.prepare("UPDATE telecaller_sessions SET active=0,logout_at=CURRENT_TIMESTAMP,logout_reason='new_login' WHERE user_label=? AND active=1").bind(user).run();
+      const token=crypto.randomUUID()+crypto.randomUUID();
+      await env.DB.prepare("INSERT INTO telecaller_sessions(token,user_label) VALUES(?,?)").bind(token,user).run();
+      return json({ok:true,token,user_label:user,login_at:new Date().toISOString(),idle_timeout_minutes:10},200,env);
+    }
+    if(request.method==="GET"&&path==="/api/session/me"){
+      const s=await requireSession(request,env,false);if(!s)return json({error:"Session expired",expired:true},401,env);
+      return json({ok:true,user_label:s.user_label,login_at:s.login_at,last_activity_at:s.last_activity_at,call_active:!!s.call_active,idle_timeout_minutes:10},200,env);
+    }
+    if(request.method==="POST"&&path==="/api/session/activity"){
+      const s=await requireSession(request,env,true);if(!s)return json({error:"Session expired",expired:true},401,env);return json({ok:true,last_activity_at:new Date().toISOString()},200,env);
+    }
+    if(request.method==="POST"&&path==="/api/session/call-start"){
+      const s=await requireSession(request,env,true);if(!s)return json({error:"Session expired",expired:true},401,env);
+      await env.DB.prepare("UPDATE telecaller_sessions SET call_active=1,call_started_at=CURRENT_TIMESTAMP,last_activity_at=CURRENT_TIMESTAMP WHERE token=?").bind(bearer(request)).run();return json({ok:true},200,env);
+    }
+    if(request.method==="POST"&&path==="/api/session/call-end"){
+      const s=await requireSession(request,env,false);if(!s)return json({error:"Session expired",expired:true},401,env);
+      await env.DB.prepare("UPDATE telecaller_sessions SET call_active=0,call_started_at=NULL,last_activity_at=CURRENT_TIMESTAMP WHERE token=?").bind(bearer(request)).run();return json({ok:true},200,env);
+    }
+    if(request.method==="POST"&&path==="/api/session/logout"){
+      const token=bearer(request);if(token)await env.DB.prepare("UPDATE telecaller_sessions SET active=0,call_active=0,logout_at=CURRENT_TIMESTAMP,logout_reason='manual' WHERE token=?").bind(token).run();return json({ok:true},200,env);
+    }
+    if(request.method==="GET"&&path==="/api/telecaller/batch"){
+      const s=await requireSession(request,env,true);if(!s)return json({error:"Session expired",expired:true},401,env);
+      const leads=await currentBatch(env,s.user_label);return json({ok:true,user_label:s.user_label,queue:queueForTelecaller(s.user_label),batch_size:10,leads},200,env);
+    }
+
+    if(request.method==="POST"&&path==="/api/admin/import"){
+      if(!env.IMPORT_TOKEN||bearer(request)!==env.IMPORT_TOKEN)return json({error:"Unauthorized"},401,env);
+      const body=await request.json(),rows=Array.isArray(body.leads)?body.leads:[];if(!rows.length)return json({error:"No leads supplied"},400,env);let inserted=0,updated=0,skipped=0;
+      for(const lead of rows){const r=await upsertImportedLead(env.DB,lead);if(r.skipped)skipped++;else if(r.duplicate)updated++;else inserted++;if(!r.skipped)await env.DB.prepare("INSERT INTO lead_activity(lead_id,activity_type,notes) VALUES(?, 'historical_import', ?)").bind(r.id,"Imported from historical lead register").run();}
+      return json({ok:true,inserted,updated,skipped},200,env);
+    }
+    if(request.method==="GET"&&path==="/api/areas"){
+      const r=await env.DB.prepare(`SELECT a.code,a.name,COUNT(l.id) total,SUM(CASE WHEN l.status='Hot' THEN 1 ELSE 0 END) hot,SUM(CASE WHEN l.status='Follow-up' THEN 1 ELSE 0 END) follow_up,SUM(CASE WHEN l.status IN ('Uncalled','No Response','Busy','Needs Review') THEN 1 ELSE 0 END) uncalled FROM areas a LEFT JOIN leads l ON l.area_code=a.code WHERE a.active=1 GROUP BY a.code,a.name ORDER BY a.name`).all();return json({areas:r.results||[]},200,env);
+    }
+    if(request.method==="GET"&&path==="/api/leads"){
+      const clauses=[],params=[];for(const [key,col] of [["area","area_code"],["status","status"],["telecaller","telecaller_assigned_to"],["manager","manager_assigned_to"]]){const v=url.searchParams.get(key);if(v){clauses.push(`${col}=?`);params.push(v);}}
+      const q=url.searchParams.get("q");if(q){const like=`%${q}%`;clauses.push("(lead_code LIKE ? OR name LIKE ? OR phone LIKE ? OR requirement LIKE ? OR area_text LIKE ?)");params.push(like,like,like,like,like);}const where=clauses.length?`WHERE ${clauses.join(" AND ")}`:"";const r=await env.DB.prepare(`SELECT * FROM leads ${where} ORDER BY first_received_at DESC,id DESC`).bind(...params).all();return json({leads:r.results||[]},200,env);
+    }
+    const claim=path.match(/^\/api\/leads\/(\d+)\/claim$/);if(request.method==="POST"&&claim){const s=await requireSession(request,env,true);if(!s)return json({error:"Session expired",expired:true},401,env);const id=Number(claim[1]);const r=await env.DB.prepare(`UPDATE leads SET telecaller_assigned_to=?,pipeline_stage='telecaller_claimed',updated_at=CURRENT_TIMESTAMP WHERE id=? AND (telecaller_assigned_to IS NULL OR telecaller_assigned_to=?) AND pipeline_stage IN ('incoming','telecaller_claimed') RETURNING id`).bind(s.user_label,id,s.user_label).first();if(!r)return json({error:"Lead already claimed or unavailable",lead:await getLead(env.DB,id)},409,env);return json({lead:await getLead(env.DB,id)},200,env);}
+    const complete=path.match(/^\/api\/leads\/(\d+)\/complete-call$/);if(request.method==="POST"&&complete){const s=await requireSession(request,env,true);if(!s)return json({error:"Session expired",expired:true},401,env);const id=Number(complete[1]),body=await request.json();body.caller=s.user_label;const validation=validateCompletion(body);if(validation)return json({error:validation},422,env);const current=await getLead(env.DB,id);if(!current)return json({error:"Lead not found"},404,env);if(current.telecaller_assigned_to&&current.telecaller_assigned_to!==s.user_label)return json({error:"Lead belongs to another telecaller"},403,env);let leadCode=current.lead_code;if(!leadCode&&body.area_code)leadCode=await allocateLeadCode(env.DB,body.area_code);const terminal=["No Response","Busy","Not Interested","Wrong Number"].includes(body.status),categorized=needsFullDetails(body.status),stage=categorized?"manager_queue":(terminal?"incoming":current.pipeline_stage||"incoming");await env.DB.prepare(`UPDATE leads SET lead_code=?,name=?,area_code=COALESCE(?,area_code),area_text=?,property_type=?,budget=?,status=?,requirement=?,notes=?,follow_up_at=?,last_contact_at=CURRENT_TIMESTAMP,contacted_at=CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE contacted_at END,contact_complete=?,pipeline_stage=?,categorized_at=CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE categorized_at END,manager_handoff_at=CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE manager_handoff_at END,updated_at=CURRENT_TIMESTAMP WHERE id=?`).bind(leadCode,body.name||current.name||null,body.area_code||null,body.area_text||null,body.property_type||null,body.budget||null,body.status,body.requirement||null,body.notes||null,body.follow_up_at||null,categorized?1:0,categorized?1:0,stage,categorized?1:0,categorized?1:0,id).run();await env.DB.prepare(`INSERT INTO lead_activity(lead_id,activity_type,caller,status,area_code,notes,requirement,follow_up_at) VALUES(?, 'call_completed', ?, ?, ?, ?, ?, ?)`).bind(id,s.user_label,body.status,body.area_code||null,body.notes||null,body.requirement||null,body.follow_up_at||null).run();return json({lead:await getLead(env.DB,id),completed:categorized},200,env);}
+    const detail=path.match(/^\/api\/leads\/(\d+)$/);if(request.method==="GET"&&detail){const id=Number(detail[1]),lead=await getLead(env.DB,id);if(!lead)return json({error:"Lead not found"},404,env);const activity=await env.DB.prepare("SELECT * FROM lead_activity WHERE lead_id=? ORDER BY created_at DESC,id DESC").bind(id).all();return json({lead,activity:activity.results||[]},200,env);}
+    return json({error:"Not found"},404,env);
+  }catch(error){return json({error:error.message||"Server error"},500,env);}
+}};
