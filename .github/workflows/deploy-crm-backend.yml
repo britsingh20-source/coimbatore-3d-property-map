@@ -79,6 +79,7 @@ jobs:
           npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/real_lead_intake.sql || true
           npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/telecaller_sessions.sql
           npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/telecaller_credentials.sql
+          npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/fix_staff_fk_aliases.sql
       - name: Deploy Worker
         id: deploy
         shell: bash
