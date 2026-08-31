@@ -59,7 +59,7 @@ jobs:
         run: |
           cat > wrangler.crm.toml <<EOF
           name = "${WORKER_NAME}"
-          main = "cloudflare/main-with-hours.js"
+          main = "cloudflare/main-area-priority.js"
           compatibility_date = "2026-08-31"
           workers_dev = true
           [vars]
