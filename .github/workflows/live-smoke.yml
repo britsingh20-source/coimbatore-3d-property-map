@@ -1,0 +1,35 @@
+name: Live CRM Smoke Test
+
+on:
+  workflow_run:
+    workflows: ["Deploy 3D Property Map"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    env:
+      LIVE_URL: https://britsingh20-source.github.io/coimbatore-3d-property-map/
+      TC01_PIN: ${{ secrets.TC01_PIN }}
+      AD01_PIN: ${{ secrets.AD01_PIN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: |
+          npm install
+          npm install --no-save playwright@1.55.0
+          npx playwright install --with-deps chromium
+      - name: Verify backend health
+        run: |
+          curl -fsS https://coimbatore-lead-crm-api.britsingh20.workers.dev/api/health | tee /tmp/health.json
+          jq -e '.ok == true' /tmp/health.json >/dev/null
+      - name: Run live browser verification
+        run: npm run smoke:live
