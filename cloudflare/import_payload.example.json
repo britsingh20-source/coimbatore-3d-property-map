@@ -1,0 +1,14 @@
+{
+  "leads": [
+    {
+      "phone": "9000000000",
+      "display_phone": "+91 90000 00000",
+      "name": "Example Customer",
+      "status": "Uncalled",
+      "source": ["Historical Excel"],
+      "first_received_at": "2026-08-29T09:00:00+05:30",
+      "last_received_at": "2026-08-29T09:00:00+05:30",
+      "date_precision": "exact"
+    }
+  ]
+}
