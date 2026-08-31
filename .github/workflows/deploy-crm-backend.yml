@@ -81,6 +81,7 @@ jobs:
           npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/telecaller_credentials.sql
           npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/fix_staff_fk_aliases.sql
           npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/retry_queue.sql
+          npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/area_master_priority.sql
       - name: Deploy Worker
         id: deploy
         shell: bash
@@ -132,7 +133,9 @@ jobs:
           RETRY_STATUS=$(curl -sS -o /tmp/retry-probe.json -w '%{http_code}' "$URL/api/retry-queue/summary")
           test "$RETRY_STATUS" = "401"
           jq -e '.error == "Session expired"' /tmp/retry-probe.json >/dev/null
-          echo "CRM, working-hours and retry-queue routes are live"
+          curl -fsS "$URL/api/areas" | jq -e '.areas | length > 50' >/dev/null
+          curl -fsS "$URL/api/areas" | jq -e '.priority_config.p1_max_km == 12' >/dev/null
+          echo "CRM, working-hours, retry-queue and area-priority routes are live"
       - name: Update frontend runtime API URL
         shell: bash
         run: |
