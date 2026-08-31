@@ -35,6 +35,27 @@ function queueForTelecaller(label,key=indiaDateKey()){const idx=label==="Telecal
 async function getLead(db,id){return db.prepare("SELECT * FROM leads WHERE id=?").bind(id).first();}
 async function allocateLeadCode(db,areaCode){if(!areaCode)return null;const row=await db.prepare("UPDATE area_counters SET last_number=last_number+1 WHERE area_code=? RETURNING last_number").bind(areaCode).first();return row?`${areaCode}-${String(row.last_number).padStart(4,"0")}`:null;}
 
+async function pinHash(env,employeeId,pin){
+  if(!env.IMPORT_TOKEN) throw new Error("PIN security key is not configured");
+  const enc=new TextEncoder();
+  const key=await crypto.subtle.importKey("raw",enc.encode(env.IMPORT_TOKEN),{name:"HMAC",hash:"SHA-256"},false,["sign"]);
+  const sig=await crypto.subtle.sign("HMAC",key,enc.encode(`${employeeId}:${pin}`));
+  return [...new Uint8Array(sig)].map(v=>v.toString(16).padStart(2,"0")).join("");
+}
+function validPin(pin){return /^\d{3}$/.test(String(pin||""));}
+async function credentialFor(db,employeeId){return db.prepare("SELECT * FROM telecaller_credentials WHERE employee_id=?").bind(employeeId).first();}
+async function noteBadPin(db,employeeId){
+  await db.prepare(`UPDATE telecaller_credentials SET
+    locked_until=CASE WHEN failed_attempts+1>=5 THEN datetime('now','+15 minutes') ELSE locked_until END,
+    failed_attempts=CASE WHEN failed_attempts+1>=5 THEN 0 ELSE failed_attempts+1 END,
+    updated_at=CURRENT_TIMESTAMP WHERE employee_id=?`).bind(employeeId).run();
+}
+async function credentialLocked(row){
+  if(!row?.locked_until)return false;
+  const t=Date.parse(String(row.locked_until).replace(" ","T")+"Z");
+  return Number.isFinite(t)&&t>Date.now();
+}
+
 async function sessionFor(request,env,{touch=false}={}){
   const token=bearer(request); if(!token)return null;
   let s=await env.DB.prepare("SELECT * FROM telecaller_sessions WHERE token=? AND active=1").bind(token).first();
@@ -78,19 +99,38 @@ export default { async fetch(request,env){
   if(request.method==="OPTIONS")return new Response(null,{headers:{"access-control-allow-origin":allowedOrigin(env),"access-control-allow-methods":"GET,POST,PATCH,OPTIONS","access-control-allow-headers":"content-type,authorization"}});
   const url=new URL(request.url),path=url.pathname.replace(/\/$/,"")||"/";
   try{
-    if(request.method==="GET"&&path==="/api/health")return json({ok:true,service:"lead-crm",secureImport:true,timedSessions:true},200,env);
+    if(request.method==="GET"&&path==="/api/health")return json({ok:true,service:"lead-crm",secureImport:true,timedSessions:true,employeePinAuth:true},200,env);
+
+    if(request.method==="POST"&&path==="/api/admin/staff/set-pin"){
+      if(!env.IMPORT_TOKEN||bearer(request)!==env.IMPORT_TOKEN)return json({error:"Unauthorized"},401,env);
+      const body=await request.json();const employeeId=String(body.employee_id||"").trim().toUpperCase();const pin=String(body.pin||"").trim();
+      if(!["TC01","TC02"].includes(employeeId))return json({error:"Unknown employee ID"},400,env);
+      if(!validPin(pin))return json({error:"PIN must be exactly 3 digits"},400,env);
+      const hash=await pinHash(env,employeeId,pin);
+      await env.DB.prepare("UPDATE telecaller_credentials SET pin_hash=?,failed_attempts=0,locked_until=NULL,active=1,updated_at=CURRENT_TIMESTAMP WHERE employee_id=?").bind(hash,employeeId).run();
+      return json({ok:true,employee_id:employeeId},200,env);
+    }
 
     if(request.method==="POST"&&path==="/api/session/login"){
-      const body=await request.json();const user=String(body.user_label||"").trim();
-      if(!["Telecaller 1","Telecaller 2"].includes(user))return json({error:"Invalid telecaller"},400,env);
+      const body=await request.json();const employeeId=String(body.employee_id||"").trim().toUpperCase();const pin=String(body.pin||"").trim();
+      if(!/^TC0[12]$/.test(employeeId)||!validPin(pin))return json({error:"Enter a valid employee ID and 3-digit PIN"},400,env);
+      const cred=await credentialFor(env.DB,employeeId);
+      if(!cred||!cred.active)return json({error:"Employee login is disabled"},403,env);
+      if(await credentialLocked(cred))return json({error:"Too many wrong PIN attempts. Try again after 15 minutes.",locked:true,locked_until:cred.locked_until},423,env);
+      if(!cred.pin_hash)return json({error:"PIN has not been configured for this employee yet"},503,env);
+      const hash=await pinHash(env,employeeId,pin);
+      if(hash!==cred.pin_hash){await noteBadPin(env.DB,employeeId);return json({error:"Incorrect employee ID or PIN"},401,env);}
+      await env.DB.prepare("UPDATE telecaller_credentials SET failed_attempts=0,locked_until=NULL,updated_at=CURRENT_TIMESTAMP WHERE employee_id=?").bind(employeeId).run();
+      const user=cred.user_label;
       await env.DB.prepare("UPDATE telecaller_sessions SET active=0,logout_at=CURRENT_TIMESTAMP,logout_reason='new_login' WHERE user_label=? AND active=1").bind(user).run();
       const token=crypto.randomUUID()+crypto.randomUUID();
       await env.DB.prepare("INSERT INTO telecaller_sessions(token,user_label) VALUES(?,?)").bind(token,user).run();
-      return json({ok:true,token,user_label:user,login_at:new Date().toISOString(),idle_timeout_minutes:10},200,env);
+      return json({ok:true,token,employee_id:employeeId,user_label:user,login_at:new Date().toISOString(),idle_timeout_minutes:10},200,env);
     }
     if(request.method==="GET"&&path==="/api/session/me"){
       const s=await requireSession(request,env,false);if(!s)return json({error:"Session expired",expired:true},401,env);
-      return json({ok:true,user_label:s.user_label,login_at:s.login_at,last_activity_at:s.last_activity_at,call_active:!!s.call_active,idle_timeout_minutes:10},200,env);
+      const cred=await env.DB.prepare("SELECT employee_id FROM telecaller_credentials WHERE user_label=?").bind(s.user_label).first();
+      return json({ok:true,employee_id:cred?.employee_id||null,user_label:s.user_label,login_at:s.login_at,last_activity_at:s.last_activity_at,call_active:!!s.call_active,idle_timeout_minutes:10},200,env);
     }
     if(request.method==="POST"&&path==="/api/session/activity"){
       const s=await requireSession(request,env,true);if(!s)return json({error:"Session expired",expired:true},401,env);return json({ok:true,last_activity_at:new Date().toISOString()},200,env);
