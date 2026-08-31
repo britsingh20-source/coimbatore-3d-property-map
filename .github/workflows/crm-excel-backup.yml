@@ -1,6 +1,11 @@
 name: CRM Excel Backup
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/crm-excel-backup.yml'
+      - 'scripts/build-crm-backup.mjs'
   schedule:
     - cron: '15 */6 * * *'
   workflow_dispatch:
