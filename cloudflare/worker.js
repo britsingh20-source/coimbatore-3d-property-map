@@ -41,7 +41,7 @@ async function sessionFor(request,env,{touch=false}={}){
   if(!s)return null;
   const now=Date.now(), last=Date.parse(String(s.last_activity_at).replace(" ","T")+"Z"), callStarted=s.call_started_at?Date.parse(String(s.call_started_at).replace(" ","T")+"Z"):0;
   const idleMs=now-last;
-  const callExpired=s.call_active && callStarted && now-callStarted>60*60*1000;
+  const callExpired=s.call_active && callStarted && now-callStarted>4*60*60*1000;
   if((!s.call_active && idleMs>10*60*1000)||callExpired){
     await env.DB.prepare("UPDATE telecaller_sessions SET active=0,logout_at=CURRENT_TIMESTAMP,logout_reason=? WHERE token=?").bind(callExpired?"call_timeout":"idle_10_minutes",token).run();
     return null;
