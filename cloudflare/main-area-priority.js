@@ -34,8 +34,29 @@ function haversineKm(lat1,lon1,lat2,lon2){
 }
 async function config(env){return await env.DB.prepare("SELECT * FROM area_priority_config WHERE id=1").first();}
 async function masters(env){return (await env.DB.prepare("SELECT * FROM area_master WHERE active=1 ORDER BY canonical_name").all()).results||[];}
+async function catchmentAliasMatch(env,text){
+  const compact=norm(text); if(!compact) return null;
+  const aliases=(await env.DB.prepare(`SELECT ca.alias_display,ca.parent_code,ca.mapping_type,m.*
+    FROM area_catchment_aliases ca JOIN area_master m ON m.code=ca.parent_code
+    WHERE m.active=1`).all()).results||[];
+  let best=null,bestScore=999;
+  for(const row of aliases){
+    const n=norm(row.alias_display); if(!n) continue;
+    if(n===compact) return row;
+    if(n.startsWith(compact)||compact.startsWith(n)){
+      const score=Math.abs(n.length-compact.length)+0.1;
+      if(score<bestScore){best=row;bestScore=score;}
+    }
+    const d=levenshtein(n,compact),allowed=compact.length<=5?1:compact.length<=10?2:3;
+    if(d<=allowed&&d<bestScore){best=row;bestScore=d;}
+  }
+  return best;
+}
 async function resolveArea(env,text){
-  const q=norm(text);if(!q)return null;const rows=await masters(env);let best=null,bestScore=999;
+  const q=norm(text);if(!q)return null;
+  const catchment=await catchmentAliasMatch(env,text);
+  if(catchment) return catchment;
+  const rows=await masters(env);let best=null,bestScore=999;
   for(const row of rows){
     const candidates=[row.canonical_name,row.code];
     try{candidates.push(...JSON.parse(row.aliases||"[]"));}catch(_){}
@@ -52,11 +73,12 @@ async function resolveArea(env,text){
 async function areaResponse(env){
   const cfg=await config(env);
   const rows=(await env.DB.prepare(`SELECT m.code,m.canonical_name AS name,m.zone,m.aliases,m.latitude,m.longitude,m.distance_from_idigarai_km,m.priority_band,
+    COALESCE(c.radius_km,7.0) AS catchment_radius_km,
     COUNT(l.id) total,
     SUM(CASE WHEN l.status='Hot' THEN 1 ELSE 0 END) hot,
     SUM(CASE WHEN l.status='Follow-up' THEN 1 ELSE 0 END) follow_up,
     SUM(CASE WHEN l.status IN ('Uncalled','No Response','Busy','Needs Review') THEN 1 ELSE 0 END) uncalled
-    FROM area_master m LEFT JOIN leads l ON l.area_code=m.code
+    FROM area_master m LEFT JOIN area_catchments c ON c.parent_code=m.code LEFT JOIN leads l ON l.area_code=m.code
     WHERE m.active=1 GROUP BY m.code ORDER BY m.canonical_name`).all()).results||[];
   for(const row of rows){
     row.priority_band=priorityFor(row.distance_from_idigarai_km,cfg)||row.priority_band||null;
