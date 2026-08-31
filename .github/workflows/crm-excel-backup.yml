@@ -1,0 +1,98 @@
+name: CRM Excel Backup
+
+on:
+  schedule:
+    - cron: '15 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.R2_ACCOUNT_ID }}
+      DB_NAME: coimbatore-lead-crm
+      R2_BUCKET: coimbatore-crm-excel-backups
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify Cloudflare credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ -n "${CLOUDFLARE_API_TOKEN:-}" ] || { echo "CLOUDFLARE_API_TOKEN is missing"; exit 1; }
+          [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ] || { echo "CLOUDFLARE_ACCOUNT_ID is missing"; exit 1; }
+      - name: Install backup tools
+        run: npm install --no-save wrangler@latest xlsx@0.18.5
+      - name: Resolve D1 database
+        id: d1
+        shell: bash
+        run: |
+          set -euo pipefail
+          LIST=$(curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/d1/database?per_page=100")
+          DB_ID=$(echo "$LIST" | jq -r --arg NAME "$DB_NAME" '.result[]? | select(.name==$NAME) | .uuid' | head -n1)
+          [ -n "$DB_ID" ] || { echo "D1 database not found"; exit 1; }
+          echo "db_id=$DB_ID" >> "$GITHUB_OUTPUT"
+      - name: Generate Wrangler config
+        shell: bash
+        run: |
+          cat > wrangler.backup.toml <<EOF
+          name = "crm-excel-backup"
+          compatibility_date = "2026-09-01"
+          [[d1_databases]]
+          binding = "DB"
+          database_name = "${DB_NAME}"
+          database_id = "${{ steps.d1.outputs.db_id }}"
+          EOF
+      - name: Export live CRM tables as JSON
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p backup-data backups
+          npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.backup.toml --json --command "SELECT * FROM leads ORDER BY id" > backup-data/leads.json
+          npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.backup.toml --json --command "SELECT * FROM lead_activity ORDER BY lead_id,id" > backup-data/activities.json
+          npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.backup.toml --json --command "SELECT * FROM area_master ORDER BY canonical_name" > backup-data/areas.json
+          npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.backup.toml --json --command "SELECT * FROM area_catchments ORDER BY parent_code" > backup-data/catchments.json
+          npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.backup.toml --json --command "SELECT * FROM area_catchment_aliases ORDER BY parent_code,alias_display" > backup-data/aliases.json
+          npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.backup.toml --json --command "SELECT * FROM area_priority_config WHERE id=1" > backup-data/priority.json
+      - name: Build Excel workbook
+        id: build
+        shell: bash
+        run: |
+          set -euo pipefail
+          STAMP=$(TZ=Asia/Kolkata date '+%Y-%m-%d_%H-%M-IST')
+          FILE="backups/CRM_Backup_${STAMP}.xlsx"
+          node scripts/build-crm-backup.mjs backup-data "$FILE" | tee /tmp/backup-result.json
+          test -s "$FILE"
+          echo "file=$FILE" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$FILE")" >> "$GITHUB_OUTPUT"
+          jq -e '.ok == true and .customers > 0' /tmp/backup-result.json >/dev/null
+      - name: Ensure private R2 backup bucket exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler r2 bucket create "$R2_BUCKET" >/tmp/r2-create.log 2>&1 || true
+          npx wrangler r2 bucket list | grep -q "$R2_BUCKET" || { cat /tmp/r2-create.log; echo "R2 backup bucket unavailable"; exit 1; }
+      - name: Upload dated and latest Excel backups
+        shell: bash
+        run: |
+          set -euo pipefail
+          FILE='${{ steps.build.outputs.file }}'
+          NAME='${{ steps.build.outputs.name }}'
+          npx wrangler r2 object put "$R2_BUCKET/$NAME" --file "$FILE"
+          npx wrangler r2 object put "$R2_BUCKET/CRM_Backup_Latest.xlsx" --file "$FILE"
+          echo "Excel backup uploaded successfully: $NAME"
+      - name: Verify uploaded backup exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          NAME='${{ steps.build.outputs.name }}'
+          npx wrangler r2 object get "$R2_BUCKET/$NAME" --file /tmp/verify.xlsx
+          test -s /tmp/verify.xlsx
+          cmp -s '${{ steps.build.outputs.file }}' /tmp/verify.xlsx
+          echo "Backup verification passed"
