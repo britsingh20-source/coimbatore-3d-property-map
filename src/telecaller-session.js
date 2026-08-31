@@ -8,6 +8,7 @@ let hoursTimer = null;
 let lastActivitySent = 0;
 let callWasStarted = false;
 let hoursData = null;
+let sessionVerifyPromise = null;
 
 const STAFF_IDS = {
   TC01:"Telecaller 1", TC02:"Telecaller 2",
@@ -76,11 +77,44 @@ async function loadWorkHours(force=false){
   catch(e){const box=document.querySelector("#work-hours-content");if(box)box.innerHTML=`<div class="work-hours-error">Working-hours report is temporarily unavailable. Your CRM login remains active. ${esc(e.message)}</div>`;}
 }
 
+async function verifyMainSession(){
+  if(!token())return false;
+  if(sessionVerifyPromise)return sessionVerifyPromise;
+  sessionVerifyPromise=(async()=>{
+    try{
+      const verified=await api("/api/session/me");
+      session={...(session||{}),...verified};
+      localStorage.setItem(USER_KEY,session.user_label);
+      syncSelector(session.user_label);
+      return true;
+    }catch(e){
+      return false;
+    }finally{
+      sessionVerifyPromise=null;
+    }
+  })();
+  return sessionVerifyPromise;
+}
+
 async function login(employeeId,pin){
   const id=String(employeeId||"").trim().toUpperCase(),p=String(pin||"").trim(),error=document.querySelector("#tc-login-error");if(error)error.textContent="";
   if(!STAFF_IDS[id]){if(error)error.textContent="Enter a valid Employee ID: TC01, TC02, MG01, MG02, AD01 or DR01.";return;}
   if(!/^\d{3}$/.test(p)){if(error)error.textContent="PIN must be exactly 3 digits.";return;}
-  try{const data=await api("/api/session/login",{method:"POST",body:JSON.stringify({employee_id:id,pin:p})});localStorage.setItem(TOKEN_KEY,data.token);localStorage.setItem(USER_KEY,data.user_label);session=data;hoursData=null;document.querySelector("#tc-pin").value="";hideGate();syncSelector(data.user_label);window.dispatchEvent(new CustomEvent("crm-session-login",{detail:data}));startChecks();}
+  try{
+    const data=await api("/api/session/login",{method:"POST",body:JSON.stringify({employee_id:id,pin:p})});
+    localStorage.setItem(TOKEN_KEY,data.token);
+    session=data;
+    const verified=await verifyMainSession();
+    if(!verified){
+      localStorage.removeItem(TOKEN_KEY);
+      session=null;
+      throw new Error("Login was accepted but the new session could not be verified. Please try once more.");
+    }
+    hoursData=null;
+    localStorage.setItem(USER_KEY,session.user_label);
+    document.querySelector("#tc-pin").value="";
+    hideGate();syncSelector(session.user_label);window.dispatchEvent(new CustomEvent("crm-session-login",{detail:session}));startChecks();
+  }
   catch(e){if(error)error.textContent=e.message||"Could not start session";if(e.status===423)document.querySelector("#tc-pin").value="";}
 }
 async function logout(reason="manual"){
@@ -88,15 +122,16 @@ async function logout(reason="manual"){
   localStorage.removeItem(TOKEN_KEY);session=null;hoursData=null;document.body.classList.remove("staff-session-active","tc-session-active");showGate();window.dispatchEvent(new CustomEvent("crm-session-logout",{detail:{reason}}));
 }
 function syncSelector(user){const s=document.querySelector("#crm-user-select");if(s){s.value=user;s.disabled=true;}localStorage.setItem(USER_KEY,user);}
-async function restore(){const t=token();if(!t){showGate();return;}try{session=await api("/api/session/me");localStorage.setItem(USER_KEY,session.user_label);syncSelector(session.user_label);hideGate();startChecks();}catch(_){localStorage.removeItem(TOKEN_KEY);showGate();}}
-async function sendActivity(){if(!session||document.hidden)return;const now=Date.now();if(now-lastActivitySent<45000)return;lastActivitySent=now;try{await api("/api/session/activity",{method:"POST",body:"{}"});}catch(e){if(e.status===401)logout("idle");}}
-function startChecks(){if(checkTimer)clearInterval(checkTimer);if(hoursTimer)clearInterval(hoursTimer);checkTimer=setInterval(async()=>{renderStrip();if(!session)return;try{session={...session,...await api("/api/session/me")};document.body.classList.toggle("tc-session-active",isTelecaller(session.user_label));}catch(e){if(e.status===401)logout("idle");}},30000);hoursTimer=setInterval(()=>{if(session&&isSupervisor(session.role))loadWorkHours();},60000);}
-async function callStart(){if(!session||!isTelecaller(session.user_label))return;callWasStarted=true;try{await api("/api/session/call-start",{method:"POST",body:"{}"});}catch(_){} }
-async function callEnd(){if(!session||!callWasStarted)return;callWasStarted=false;try{await api("/api/session/call-end",{method:"POST",body:"{}"});}catch(e){if(e.status===401)logout("idle");}}
+async function restore(){const t=token();if(!t){showGate();return;}const ok=await verifyMainSession();if(ok){hideGate();startChecks();}else{localStorage.removeItem(TOKEN_KEY);session=null;showGate();}}
+async function sendActivity(){if(!session||document.hidden)return;const now=Date.now();if(now-lastActivitySent<45000)return;lastActivitySent=now;try{await api("/api/session/activity",{method:"POST",body:"{}"});}catch(e){if(e.status===401){const valid=await verifyMainSession();if(!valid)logout("idle");}}}
+function startChecks(){if(checkTimer)clearInterval(checkTimer);if(hoursTimer)clearInterval(hoursTimer);checkTimer=setInterval(async()=>{renderStrip();if(!session)return;const valid=await verifyMainSession();if(!valid)logout("idle");else document.body.classList.toggle("tc-session-active",isTelecaller(session.user_label));},30000);hoursTimer=setInterval(()=>{if(session&&isSupervisor(session.role))loadWorkHours();},60000);}
+async function callStart(){if(!session||!isTelecaller(session.user_label))return;callWasStarted=true;try{await api("/api/session/call-start",{method:"POST",body:"{}"});}catch(e){if(e.status===401){const valid=await verifyMainSession();if(!valid)logout("idle");}} }
+async function callEnd(){if(!session||!callWasStarted)return;callWasStarted=false;try{await api("/api/session/call-end",{method:"POST",body:"{}"});}catch(e){if(e.status===401){const valid=await verifyMainSession();if(!valid)logout("idle");}}}
 
-["click","keydown","touchstart","input","scroll"].forEach(evt=>window.addEventListener(evt,sendActivity,{passive:true}));
-document.addEventListener("click",e=>{if(e.target.closest('a[href^="tel:"]'))callStart();},true);
-document.addEventListener("visibilitychange",()=>{if(!document.hidden)callEnd();});
-window.addEventListener("crm-user-changed",e=>{if(session&&e.detail?.user!==session.user_label)syncSelector(session.user_label);});
-window.CRM_SESSION={api,token,user:()=>session?.user_label||localStorage.getItem(USER_KEY),role:()=>session?.role||null,isActive:()=>!!session,restore,logout,sendActivity,loadWorkHours};
-ensureUI();setTimeout(restore,300);setInterval(renderStrip,15000);
+document.addEventListener("pointerdown",sendActivity,{passive:true});
+document.addEventListener("keydown",sendActivity,{passive:true});
+document.addEventListener("visibilitychange",()=>{if(!document.hidden)sendActivity();});
+window.addEventListener("crm-call-start",callStart);
+window.addEventListener("crm-call-end",callEnd);
+window.CRM_SESSION={token,user:()=>session?.user_label||null,role:()=>session?.role||null,employeeId:()=>session?.employee_id||null,session:()=>session,verify:verifyMainSession,logout};
+ensureUI();restore();
