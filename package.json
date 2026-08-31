@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "scripts": {"dev":"vite","build":"vite build","preview":"vite preview"},
+  "scripts": {"dev":"vite","build":"vite build","preview":"vite preview","smoke:live":"node scripts/live-smoke.mjs"},
   "dependencies": {"leaflet":"^1.9.4","maplibre-gl":"^5.7.1"},
   "devDependencies": {"vite":"^7.1.3"}
 }
