@@ -59,7 +59,7 @@ jobs:
         run: |
           cat > wrangler.crm.toml <<EOF
           name = "${WORKER_NAME}"
-          main = "cloudflare/main-area-priority.js"
+          main = "cloudflare/main-area-management.js"
           compatibility_date = "2026-08-31"
           workers_dev = true
           [vars]
@@ -136,7 +136,9 @@ jobs:
           jq -e '.error == "Session expired"' /tmp/retry-probe.json >/dev/null
           AREA_JSON=$(curl -fsS "$URL/api/areas")
           echo "$AREA_JSON" | jq -e '.areas | length >= 9' >/dev/null
-          echo "$AREA_JSON" | jq -e '[.areas[].code] | all(. as $c | ["VDV","TDM","PMD","VPP","KRM","IDG","SRV","KLP","SLR"] | index($c) != null) or (length > 9)' >/dev/null
+          for CODE in VDV TDM PMD VPP KRM IDG SRV KLP SLR; do
+            echo "$AREA_JSON" | jq -e --arg CODE "$CODE" '.areas | any(.code == $CODE)' >/dev/null
+          done
           echo "$AREA_JSON" | jq -e '.priority_config.p1_max_km == 12' >/dev/null
           echo "CRM, working-hours, retry-queue and primary-area routes are live"
       - name: Update frontend runtime API URL
