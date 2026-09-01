@@ -17,6 +17,7 @@ async function loadCRM(){
       await import('./manual-lead-intake.js');
       await import('./area-management.js');
       await import('./crm-backup.js');
+      await import('./daily-lead-import.js');
       await import('./director-view.js');
       window.dispatchEvent(new CustomEvent('crm-modules-ready'));
     } finally {
