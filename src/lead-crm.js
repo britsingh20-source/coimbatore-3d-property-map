@@ -44,9 +44,10 @@ let currentUser = storedUser();
 
 async function api(path, options = {}) {
   if (!API_BASE && location.hostname.includes("github.io")) throw new Error("API not configured");
+  const sessionToken = window.CRM_SESSION?.token?.() || localStorage.getItem("crm-telecaller-session-token") || "";
   const response = await fetch(API_BASE + path, {
     ...options,
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) }
+    headers: { "Content-Type": "application/json", ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}), ...(options.headers || {}) }
   });
   if (!response.ok) throw new Error(await response.text());
   return response.json();
@@ -183,12 +184,12 @@ async function saveSelectedLead() {
   const payload = {
     status: document.querySelector("#crm-dialog-status").value,
     notes: document.querySelector("#crm-dialog-notes").value,
-    follow_up_at: document.querySelector("#crm-dialog-followup").value || null,
-    assigned_to: currentUser
+    follow_up_at: document.querySelector("#crm-dialog-followup").value || null
   };
   try {
-    if (!String(selectedLead.id).startsWith("demo-")) await api(`/api/leads/${selectedLead.id}`, { method: "PATCH", body: JSON.stringify(payload) });
-    Object.assign(selectedLead, payload, { last_contact_at: new Date().toISOString() });
+    let saved = null;
+    if (!String(selectedLead.id).startsWith("demo-")) saved = await api(`/api/leads/${selectedLead.id}`, { method: "PATCH", body: JSON.stringify(payload) });
+    if (saved?.lead) Object.assign(selectedLead, saved.lead); else Object.assign(selectedLead, payload);
     saveDemo();
     document.querySelector("#crm-lead-dialog").close();
     renderAll();
