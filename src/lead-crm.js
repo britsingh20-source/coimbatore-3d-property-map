@@ -183,12 +183,12 @@ async function saveSelectedLead() {
   const payload = {
     status: document.querySelector("#crm-dialog-status").value,
     notes: document.querySelector("#crm-dialog-notes").value,
-    follow_up_at: document.querySelector("#crm-dialog-followup").value || null,
-    assigned_to: currentUser
+    follow_up_at: document.querySelector("#crm-dialog-followup").value || null
   };
   try {
-    if (!String(selectedLead.id).startsWith("demo-")) await api(`/api/leads/${selectedLead.id}`, { method: "PATCH", body: JSON.stringify(payload) });
-    Object.assign(selectedLead, payload, { last_contact_at: new Date().toISOString() });
+    let saved = null;
+    if (!String(selectedLead.id).startsWith("demo-")) saved = await api(`/api/leads/${selectedLead.id}`, { method: "PATCH", body: JSON.stringify(payload) });
+    if (saved?.lead) Object.assign(selectedLead, saved.lead); else Object.assign(selectedLead, payload);
     saveDemo();
     document.querySelector("#crm-lead-dialog").close();
     renderAll();
