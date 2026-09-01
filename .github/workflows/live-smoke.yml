@@ -33,11 +33,17 @@ jobs:
           HTTP=$(curl -L -sS -o /tmp/page.html -w '%{http_code}' "$LIVE_URL")
           test "$HTTP" = "200"
           grep -q "Coimbatore" /tmp/page.html
+      - name: Verify real lead inventory
+        run: |
+          curl -fsS "$API_URL/api/leads" > /tmp/leads.json
+          TOTAL=$(jq '.leads | length' /tmp/leads.json)
+          echo "Live unique leads: $TOTAL"
+          test "$TOTAL" -ge 184
       - name: Verify public area API
         run: |
           curl -fsS "$API_URL/api/areas" | tee /tmp/areas.json
           jq -e '.areas | type == "array"' /tmp/areas.json >/dev/null
-      - name: Verify all six staff logins and sessions
+      - name: Verify all six staff logins, sessions and telecaller batches
         shell: bash
         run: |
           set -euo pipefail
@@ -66,6 +72,21 @@ jobs:
               echo "$ID session verification failed: HTTP $CODE"
               jq -c 'del(.token)' /tmp/session.json 2>/dev/null || cat /tmp/session.json
               exit 1
+            fi
+            if [ "$ID" = "TC01" ] || [ "$ID" = "TC02" ]; then
+              BATCH_CODE=$(curl -sS -o /tmp/batch.json -w '%{http_code}' "$API_URL/api/telecaller/batch" -H "Authorization: Bearer $TOKEN")
+              if [ "$BATCH_CODE" != 200 ]; then
+                echo "$ID batch failed: HTTP $BATCH_CODE"
+                jq -c '.' /tmp/batch.json 2>/dev/null || cat /tmp/batch.json
+                exit 1
+              fi
+              BATCH_COUNT=$(jq '.leads | length' /tmp/batch.json)
+              QUEUE=$(jq -r '.queue // "unknown"' /tmp/batch.json)
+              echo "$ID current batch: $BATCH_COUNT ($QUEUE)"
+              if [ "$BATCH_COUNT" -lt 1 ]; then
+                echo "$ID has no assigned Current 10 leads"
+                exit 1
+              fi
             fi
             LOGOUT_OK=0
             for WAIT in 0 1 2; do
