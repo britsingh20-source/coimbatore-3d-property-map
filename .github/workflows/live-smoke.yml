@@ -13,10 +13,16 @@ jobs:
   smoke:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 5
     env:
       LIVE_URL: https://britsingh20-source.github.io/coimbatore-3d-property-map/
       API_URL: https://coimbatore-lead-crm-api.britsingh20.workers.dev
+      TC01_PIN: ${{ secrets.TC01_PIN }}
+      TC02_PIN: ${{ secrets.TC02_PIN }}
+      MG01_PIN: ${{ secrets.MG01_PIN }}
+      MG02_PIN: ${{ secrets.MG02_PIN }}
+      AD01_PIN: ${{ secrets.AD01_PIN }}
+      DR01_PIN: ${{ secrets.DR01_PIN }}
     steps:
       - name: Verify backend health
         run: |
@@ -31,3 +37,32 @@ jobs:
         run: |
           curl -fsS "$API_URL/api/areas" | tee /tmp/areas.json
           jq -e '.areas | type == "array"' /tmp/areas.json >/dev/null
+      - name: Verify all six staff logins and sessions
+        shell: bash
+        run: |
+          set -euo pipefail
+          check_login() {
+            ID="$1"; PIN="$2"
+            [ -n "$PIN" ] || { echo "$ID PIN secret missing"; exit 1; }
+            LOGIN=$(curl -fsS -X POST "$API_URL/api/session/login" \
+              -H 'Content-Type: application/json' \
+              --data "$(jq -nc --arg employee_id "$ID" --arg pin "$PIN" '{employee_id:$employee_id,pin:$pin}')")
+            TOKEN=$(echo "$LOGIN" | jq -r '.token // empty')
+            test -n "$TOKEN"
+            echo "$LOGIN" | jq -e --arg ID "$ID" '.ok == true and .employee_id == $ID and (.user_label|length>0) and (.role|length>0)' >/dev/null
+            OK=0
+            for WAIT in 0 1 2 3 5; do
+              [ "$WAIT" = 0 ] || sleep "$WAIT"
+              CODE=$(curl -sS -o /tmp/session.json -w '%{http_code}' "$API_URL/api/session/me" -H "Authorization: Bearer $TOKEN")
+              if [ "$CODE" = 200 ] && jq -e --arg ID "$ID" '.ok == true and .employee_id == $ID' /tmp/session.json >/dev/null; then OK=1; break; fi
+            done
+            test "$OK" = 1
+            curl -fsS -X POST "$API_URL/api/session/logout" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' --data '{}' >/dev/null
+            echo "$ID login/session PASS"
+          }
+          check_login TC01 "$TC01_PIN"
+          check_login TC02 "$TC02_PIN"
+          check_login MG01 "$MG01_PIN"
+          check_login MG02 "$MG02_PIN"
+          check_login AD01 "$AD01_PIN"
+          check_login DR01 "$DR01_PIN"
