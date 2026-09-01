@@ -140,9 +140,15 @@ function renderLeadList() {
     <article class="crm-lead-row" data-lead="${lead.id}">
       <div><b>${leadName(lead)}</b><small>${lead.lead_code || "No code"} · ${leadPhone(lead)}</small></div>
       <span>${areaName(lead.area_code)}</span><span class="crm-status ${String(lead.status).toLowerCase().replace(/\s+/g, "-")}">${lead.status}</span>
-      <button data-open-lead="${lead.id}">Open →</button>
+      <button class="crm-open" type="button" data-open-lead="${lead.id}">Open →</button>
     </article>`).join("") || `<div class="crm-empty">No leads match this filter.</div>`;
-  document.querySelectorAll("[data-open-lead]").forEach((button) => button.onclick = () => openLead(button.dataset.openLead));
+  document.querySelectorAll(".crm-lead-row[data-lead]").forEach((row) => {
+    row.setAttribute("role", "button");
+    row.setAttribute("tabindex", "0");
+    row.onclick = (event) => { if (!event.target.closest("button,a,input,select,textarea")) openLead(row.dataset.lead); };
+    row.onkeydown = (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openLead(row.dataset.lead); } };
+  });
+  document.querySelectorAll("[data-open-lead]").forEach((button) => button.onclick = (event) => { event.stopPropagation(); openLead(button.dataset.openLead); });
 }
 
 function renderLeadDialog(lead) {
