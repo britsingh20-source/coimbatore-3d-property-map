@@ -59,7 +59,7 @@ jobs:
         run: |
           cat > wrangler.crm.toml <<EOF
           name = "${WORKER_NAME}"
-          main = "cloudflare/main-daily-import.js"
+          main = "cloudflare/main-performance.js"
           compatibility_date = "2026-09-01"
           workers_dev = true
           [vars]
@@ -140,7 +140,7 @@ jobs:
           set_pin MG02 "$MG02_PIN"
           set_pin AD01 "$AD01_PIN"
           set_pin DR01 "$DR01_PIN"
-      - name: Verify backend health and protected import route
+      - name: Verify backend health and protected routes
         shell: bash
         run: |
           set -euo pipefail
@@ -156,13 +156,16 @@ jobs:
           IMPORT_STATUS=$(curl -sS -o /tmp/import-probe.json -w '%{http_code}' "$URL/api/admin/daily-import/history")
           test "$IMPORT_STATUS" = "401"
           jq -e '.error == "Session expired"' /tmp/import-probe.json >/dev/null
+          PERF_STATUS=$(curl -sS -o /tmp/perf-probe.json -w '%{http_code}' "$URL/api/supervisor/telecaller-performance")
+          test "$PERF_STATUS" = "401"
+          jq -e '.error == "Session expired"' /tmp/perf-probe.json >/dev/null
           AREA_JSON=$(curl -fsS "$URL/api/areas")
           echo "$AREA_JSON" | jq -e '.areas | length >= 9' >/dev/null
           for CODE in VDV TDM PMD VPP KRM IDG SRV KLP SLR; do
             echo "$AREA_JSON" | jq -e --arg CODE "$CODE" '.areas | any(.code == $CODE)' >/dev/null
           done
           echo "$AREA_JSON" | jq -e '.priority_config.p1_max_km == 12' >/dev/null
-          echo "CRM core routes and isolated daily-import route are live"
+          echo "CRM core routes plus telecaller performance route are live"
       - name: Update frontend runtime API URL
         shell: bash
         run: |
