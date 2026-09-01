@@ -44,9 +44,10 @@ let currentUser = storedUser();
 
 async function api(path, options = {}) {
   if (!API_BASE && location.hostname.includes("github.io")) throw new Error("API not configured");
+  const sessionToken = window.CRM_SESSION?.token?.() || localStorage.getItem("crm-telecaller-session-token") || "";
   const response = await fetch(API_BASE + path, {
     ...options,
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) }
+    headers: { "Content-Type": "application/json", ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}), ...(options.headers || {}) }
   });
   if (!response.ok) throw new Error(await response.text());
   return response.json();
