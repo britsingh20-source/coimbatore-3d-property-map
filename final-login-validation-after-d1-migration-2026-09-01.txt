@@ -1,0 +1,1 @@
+Run the final live CRM smoke test after the D1 telecaller session schema migration completed successfully.
