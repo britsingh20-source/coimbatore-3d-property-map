@@ -8,6 +8,7 @@ async function loadCRM(){
       await import('./lead-crm.js');
       await import('./crm-team.js');
       await import('./telecaller-session.js');
+      await import('./login-ui-commit.js');
       await import('./admin-gate-policy.js');
       await import('./session-header-fix.js');
       await import('./work-hours-visibility.js');
