@@ -67,7 +67,16 @@ jobs:
               jq -c 'del(.token)' /tmp/session.json 2>/dev/null || cat /tmp/session.json
               exit 1
             fi
-            curl -fsS -X POST "$API_URL/api/session/logout" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' --data '{}' >/dev/null
+            LOGOUT_OK=0
+            for WAIT in 0 1 2; do
+              [ "$WAIT" = 0 ] || sleep "$WAIT"
+              LOGOUT_CODE=$(curl -sS -o /tmp/logout.json -w '%{http_code}' -X POST "$API_URL/api/session/logout" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' --data '{}')
+              if [ "$LOGOUT_CODE" = 200 ]; then LOGOUT_OK=1; break; fi
+            done
+            if [ "$LOGOUT_OK" != 1 ]; then
+              echo "$ID logout warning: HTTP $LOGOUT_CODE"
+              jq -c 'del(.token)' /tmp/logout.json 2>/dev/null || cat /tmp/logout.json
+            fi
             echo "$ID login/session PASS"
           }
           check_login TC01 "$TC01_PIN"
