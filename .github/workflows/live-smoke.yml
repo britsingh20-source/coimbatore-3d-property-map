@@ -13,7 +13,7 @@ jobs:
   smoke:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     env:
       LIVE_URL: https://britsingh20-source.github.io/coimbatore-3d-property-map/
       API_URL: https://coimbatore-lead-crm-api.britsingh20.workers.dev
@@ -33,6 +33,36 @@ jobs:
           HTTP=$(curl -L -sS -o /tmp/page.html -w '%{http_code}' "$LIVE_URL")
           test "$HTTP" = "200"
           grep -q "Coimbatore" /tmp/page.html
+          grep -q '/assets/index.js' /tmp/page.html
+          curl -fsS "${LIVE_URL%/}/assets/index.js" -o /tmp/index.js
+          test -s /tmp/index.js
+      - name: Verify mobile page renders twice
+        shell: bash
+        run: |
+          set -euo pipefail
+          CHROME=$(command -v google-chrome || command -v chromium || command -v chromium-browser || true)
+          [ -n "$CHROME" ] || { echo "Chrome/Chromium not found"; exit 1; }
+          UA='Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1'
+          for RUN in 1 2; do
+            OUT="/tmp/mobile-render-$RUN.html"
+            rm -f "$OUT"
+            set +e
+            timeout 25s "$CHROME" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --disable-background-networking --disable-component-update --no-first-run --disable-sync --user-agent="$UA" --window-size=390,844 --virtual-time-budget=5000 --dump-dom "${LIVE_URL}?browser_smoke=${GITHUB_RUN_ID}-${RUN}" > "$OUT" 2>/tmp/chrome-$RUN.log
+            CODE=$?
+            set -e
+            if [ ! -s "$OUT" ]; then
+              echo "Mobile browser run $RUN produced no DOM (exit $CODE)"
+              cat /tmp/chrome-$RUN.log
+              exit 1
+            fi
+            grep -q 'id="map"' "$OUT"
+            grep -q 'CoimbatoreVeedu' "$OUT"
+            if grep -q '<div id="app"></div>' "$OUT"; then
+              echo "Mobile browser run $RUN rendered a blank app"
+              exit 1
+            fi
+            echo "Mobile browser render $RUN PASS"
+          done
       - name: Verify real lead inventory
         run: |
           curl -fsS "$API_URL/api/leads" > /tmp/leads.json
@@ -97,6 +127,7 @@ jobs:
             if [ "$LOGOUT_OK" != 1 ]; then
               echo "$ID logout warning: HTTP $LOGOUT_CODE"
               jq -c 'del(.token)' /tmp/logout.json 2>/dev/null || cat /tmp/logout.json
+              exit 1
             fi
             echo "$ID login/session PASS"
           }
