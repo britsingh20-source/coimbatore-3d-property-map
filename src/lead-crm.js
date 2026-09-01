@@ -77,11 +77,19 @@ function areaName(code) {
   return areas.find((area) => area.code === code)?.name || code || "Unassigned";
 }
 
+function leadName(lead) {
+  return lead?.name || lead?.customer_name || lead?.contact_name || "Name not captured";
+}
+
+function leadPhone(lead) {
+  return lead?.display_phone || lead?.phone || lead?.mobile || lead?.phone_number || "No phone";
+}
+
 function filteredLeads() {
   return leads.filter((lead) => {
     const matchesArea = currentArea === "ALL" || lead.area_code === currentArea;
     const matchesStatus = currentStatus === "All" || lead.status === currentStatus;
-    const haystack = `${lead.lead_code || ""} ${lead.name || ""} ${lead.phone || ""} ${lead.requirement || ""}`.toLowerCase();
+    const haystack = `${lead.lead_code || ""} ${leadName(lead)} ${leadPhone(lead)} ${lead.requirement || ""}`.toLowerCase();
     return matchesArea && matchesStatus && haystack.includes(currentSearch.toLowerCase());
   });
 }
@@ -129,27 +137,45 @@ function renderLeadList() {
   document.querySelector("#crm-lead-count").textContent = `${visible.length} leads`;
   document.querySelector("#crm-lead-list").innerHTML = visible.map((lead) => `
     <article class="crm-lead-row" data-lead="${lead.id}">
-      <div><b>${lead.name || "Unknown"}</b><small>${lead.lead_code || "No code"} · ${lead.phone}</small></div>
+      <div><b>${leadName(lead)}</b><small>${lead.lead_code || "No code"} · ${leadPhone(lead)}</small></div>
       <span>${areaName(lead.area_code)}</span><span class="crm-status ${String(lead.status).toLowerCase().replace(/\s+/g, "-")}">${lead.status}</span>
       <button data-open-lead="${lead.id}">Open →</button>
     </article>`).join("") || `<div class="crm-empty">No leads match this filter.</div>`;
   document.querySelectorAll("[data-open-lead]").forEach((button) => button.onclick = () => openLead(button.dataset.openLead));
 }
 
-function openLead(id) {
-  selectedLead = leads.find((lead) => String(lead.id) === String(id));
-  if (!selectedLead) return;
+function renderLeadDialog(lead) {
   const modal = document.querySelector("#crm-lead-dialog");
+  const phone = leadPhone(lead);
   document.querySelector("#crm-dialog-content").innerHTML = `
-    <div class="crm-dialog-head"><div><small>${selectedLead.lead_code || "UNASSIGNED"}</small><h3>${selectedLead.name || "Unknown customer"}</h3><a href="tel:${selectedLead.phone}">☎ ${selectedLead.phone}</a></div><span>${selectedLead.status}</span></div>
-    <div class="crm-dialog-grid"><p><small>Area</small><b>${areaName(selectedLead.area_code)}</b></p><p><small>Assigned to</small><b>${selectedLead.assigned_to || "Unassigned"}</b></p><p><small>Requirement</small><b>${selectedLead.requirement || "—"}</b></p><p><small>Last contact</small><b>${selectedLead.last_contact_at || "Never"}</b></p></div>
-    <label>Status<select id="crm-dialog-status">${STATUS_OPTIONS.map((option) => `<option ${option === selectedLead.status ? "selected" : ""}>${option}</option>`).join("")}</select></label>
-    <label>Notes<textarea id="crm-dialog-notes" rows="4">${selectedLead.notes || ""}</textarea></label>
-    <label>Follow-up<input id="crm-dialog-followup" type="datetime-local" value="${selectedLead.follow_up_at ? selectedLead.follow_up_at.slice(0, 16) : ""}"></label>
+    <div class="crm-dialog-head"><div><small>${lead.lead_code || "UNASSIGNED"}</small><h3>${leadName(lead)}</h3><a href="tel:${lead.phone || phone}">☎ ${phone}</a></div><span>${lead.status || "Uncalled"}</span></div>
+    <div class="crm-dialog-grid"><p><small>Area</small><b>${areaName(lead.area_code)}</b></p><p><small>Assigned to</small><b>${lead.assigned_to || lead.telecaller_assigned_to || lead.manager_assigned_to || "Unassigned"}</b></p><p><small>Requirement</small><b>${lead.requirement || "—"}</b></p><p><small>Received</small><b>${lead.first_received_at || lead.last_received_at || "—"}</b></p><p><small>Last contact</small><b>${lead.last_contact_at || "Never"}</b></p><p><small>Property type</small><b>${lead.property_type || "—"}</b></p><p><small>Budget</small><b>${lead.budget || "—"}</b></p><p><small>Preferred area</small><b>${lead.area_text || areaName(lead.area_code) || "—"}</b></p></div>
+    <label>Status<select id="crm-dialog-status">${STATUS_OPTIONS.map((option) => `<option ${option === lead.status ? "selected" : ""}>${option}</option>`).join("")}</select></label>
+    <label>Notes<textarea id="crm-dialog-notes" rows="4">${lead.notes || ""}</textarea></label>
+    <label>Follow-up<input id="crm-dialog-followup" type="datetime-local" value="${lead.follow_up_at ? String(lead.follow_up_at).slice(0, 16) : ""}"></label>
     <div class="crm-dialog-actions"><button data-crm-close>Cancel</button><button id="crm-save-lead" class="primary">Save Lead</button></div>`;
-  modal.showModal();
+  if (!modal.open) modal.showModal();
   modal.querySelector("[data-crm-close]").onclick = () => modal.close();
   modal.querySelector("#crm-save-lead").onclick = saveSelectedLead;
+}
+
+async function openLead(id) {
+  selectedLead = leads.find((lead) => String(lead.id) === String(id));
+  if (!selectedLead) return;
+  renderLeadDialog(selectedLead);
+  if (String(selectedLead.id).startsWith("demo-")) return;
+  try {
+    const detail = await api(`/api/leads/${selectedLead.id}`);
+    if (detail?.lead) {
+      selectedLead = { ...selectedLead, ...detail.lead };
+      const index = leads.findIndex((lead) => String(lead.id) === String(selectedLead.id));
+      if (index >= 0) leads[index] = selectedLead;
+      renderLeadDialog(selectedLead);
+      renderLeadList();
+    }
+  } catch (error) {
+    console.warn("Could not refresh lead detail", error);
+  }
 }
 
 async function saveSelectedLead() {
