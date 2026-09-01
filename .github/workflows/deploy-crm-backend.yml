@@ -83,6 +83,24 @@ jobs:
           npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/retry_queue.sql
           npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/area_master_priority.sql
           npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/primary_working_areas.sql
+      - name: Migrate existing session table
+        shell: bash
+        run: |
+          set -euo pipefail
+          ensure_column() {
+            COL="$1"; DEF="$2"
+            if npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --command "SELECT $COL FROM telecaller_sessions LIMIT 1" >/dev/null 2>&1; then
+              echo "telecaller_sessions.$COL already exists"
+            else
+              echo "Adding telecaller_sessions.$COL"
+              npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --command "ALTER TABLE telecaller_sessions ADD COLUMN $COL $DEF"
+            fi
+          }
+          ensure_column call_active "INTEGER NOT NULL DEFAULT 0"
+          ensure_column call_started_at "TEXT"
+          ensure_column logout_at "TEXT"
+          ensure_column active "INTEGER NOT NULL DEFAULT 1"
+          ensure_column logout_reason "TEXT"
       - name: Deploy Worker
         id: deploy
         shell: bash
