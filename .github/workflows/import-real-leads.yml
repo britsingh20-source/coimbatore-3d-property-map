@@ -72,3 +72,5 @@ jobs:
         run: |
           rm -f /tmp/secure_leads.json /tmp/import_body.json /tmp/live_leads.json
           echo "Private temporary files removed."
+
+# Re-import requested after D1/session migration regression on 2026-09-01.
