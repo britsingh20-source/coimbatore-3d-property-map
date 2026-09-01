@@ -19,6 +19,7 @@ async function loadCRM(){
       await import('./crm-backup.js');
       await import('./daily-lead-import.js');
       await import('./director-view.js');
+      await import('./supervisor-performance.js');
       window.dispatchEvent(new CustomEvent('crm-modules-ready'));
     } finally {
       document.body.classList.remove('crm-loading');
