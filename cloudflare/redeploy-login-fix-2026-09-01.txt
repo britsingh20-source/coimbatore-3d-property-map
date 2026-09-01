@@ -1,0 +1,1 @@
+Redeploy marker: refresh Worker secrets, staff PIN configuration, and D1 schema after login/session verification failure.
