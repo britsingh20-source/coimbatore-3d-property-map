@@ -37,13 +37,13 @@ async function saveProperty(request,env){
   let uploaded=0;
   for(const [key,value] of form.entries()){
     if(!key.startsWith("image_")||!(value instanceof File)||!value.size)continue;
-    if(value.size>8*1024*1024)return json({error:`${value.name} exceeds the 8 MB image limit`},422,env);
+    if(value.size>1536*1024)return json({error:`${value.name} is too large after preparation`},422,env);
     if(!value.type.startsWith("image/"))return json({error:`${value.name} is not an image`},422,env);
     const slot=key.slice(6),old=await env.DB.prepare("SELECT object_key FROM property_images WHERE property_id=? AND slot=?").bind(id,slot).first();
     const ext=(value.name.split(".").pop()||"jpg").replace(/[^a-z0-9]/gi,"").slice(0,5)||"jpg",objectKey=`${id}/${slug(slot)}-${crypto.randomUUID()}.${ext}`;
-    await env.PROPERTY_MEDIA.put(objectKey,value.stream(),{httpMetadata:{contentType:value.type}});
-    await env.DB.prepare("INSERT INTO property_images(property_id,slot,object_key,content_type,original_name) VALUES(?,?,?,?,?) ON CONFLICT(property_id,slot) DO UPDATE SET object_key=excluded.object_key,content_type=excluded.content_type,original_name=excluded.original_name,created_at=CURRENT_TIMESTAMP").bind(id,slot,objectKey,value.type,value.name).run();
-    if(old?.object_key)await env.PROPERTY_MEDIA.delete(old.object_key);uploaded++;
+    const bytes=await value.arrayBuffer();
+    await env.DB.prepare("INSERT INTO property_images(property_id,slot,object_key,image_data,content_type,original_name) VALUES(?,?,?,?,?,?) ON CONFLICT(property_id,slot) DO UPDATE SET object_key=excluded.object_key,image_data=excluded.image_data,content_type=excluded.content_type,original_name=excluded.original_name,created_at=CURRENT_TIMESTAMP").bind(id,slot,objectKey,bytes,value.type,value.name).run();
+    uploaded++;
   }
   return json({ok:true,id,uploaded,property:(await listProperties(env)).find(p=>p.id===id)},200,env);
 }
@@ -54,8 +54,8 @@ export default {async fetch(request,env,ctx){
   if(request.method==="GET"&&path==="/api/properties")return json({properties:await listProperties(env)},200,env);
   if(request.method==="POST"&&path==="/api/properties")return saveProperty(request,env);
   if(request.method==="GET"&&path.startsWith("/api/property-media/")){
-    const key=decodeURIComponent(path.slice("/api/property-media/".length)),object=await env.PROPERTY_MEDIA.get(key);if(!object)return new Response("Not found",{status:404,headers:cors(env)});
-    const headers=new Headers(cors(env));object.writeHttpMetadata(headers);headers.set("cache-control","public,max-age=31536000,immutable");return new Response(object.body,{headers});
+    const key=decodeURIComponent(path.slice("/api/property-media/".length)),object=await env.DB.prepare("SELECT image_data,content_type FROM property_images WHERE object_key=?").bind(key).first();if(!object?.image_data)return new Response("Not found",{status:404,headers:cors(env)});
+    const headers=new Headers(cors(env));headers.set("content-type",object.content_type||"image/jpeg");headers.set("cache-control","public,max-age=31536000,immutable");return new Response(object.image_data,{headers});
   }
   return baseWorker.fetch(request,env,ctx);
 }};

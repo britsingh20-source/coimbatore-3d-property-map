@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS property_images (
   property_id TEXT NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
   slot TEXT NOT NULL,
   object_key TEXT NOT NULL UNIQUE,
+  image_data BLOB,
   content_type TEXT NOT NULL,
   original_name TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
