@@ -7,21 +7,34 @@ import { properties } from "./properties.js";
 
 const API_BASE = window.LEAD_API_BASE || "";
 const absoluteMediaUrl = (url) => url?.startsWith("/api/") ? API_BASE + url : url;
+const startupToken = localStorage.getItem("crm-telecaller-session-token") || "";
+const catalogCacheKey = startupToken ? "published-property-catalog-internal" : "published-property-catalog-public";
 try {
-  const cached = JSON.parse(localStorage.getItem("published-property-catalog") || "null");
+  localStorage.removeItem("published-property-catalog");
+  const cached = JSON.parse(localStorage.getItem(catalogCacheKey) || "null");
   if (Array.isArray(cached) && cached.length) properties.splice(0, properties.length, ...cached);
 } catch (error) {
   console.info("Could not read the cached property catalog.", error);
 }
-fetch(API_BASE + "/api/properties").then((response) => response.ok ? response.json() : null).then((data) => {
+if (!startupToken) properties.forEach((property) => {
+  if (property.exactLocation === false) return;
+  let hash = 0;
+  for (const char of String(property.id)) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  const distance = 450 + (hash % 101), bearing = (hash % 360) * Math.PI / 180;
+  const [lng, lat] = property.coordinates;
+  property.coordinates = [lng + (distance * Math.sin(bearing)) / (111320 * Math.max(.2, Math.cos(lat * Math.PI / 180))), lat + (distance * Math.cos(bearing)) / 111320];
+  property.exactLocation = false;
+  property.locationAccuracy = "approximate_500m";
+});
+fetch(API_BASE + "/api/properties", { headers: startupToken ? { Authorization: "Bearer " + startupToken } : {} }).then((response) => response.ok ? response.json() : null).then((data) => {
   if (!Array.isArray(data?.properties) || !data.properties.length) return;
   const catalog = data.properties.map((property) => ({
     ...property,
     tour: (property.tour || []).map((photo) => ({ ...photo, url: absoluteMediaUrl(photo.url) }))
   }));
   const serialized = JSON.stringify(catalog);
-  if (localStorage.getItem("published-property-catalog") !== serialized) {
-    localStorage.setItem("published-property-catalog", serialized);
+  if (localStorage.getItem(catalogCacheKey) !== serialized) {
+    localStorage.setItem(catalogCacheKey, serialized);
     window.location.reload();
   }
 }).catch((error) => console.info("Published property catalog is temporarily unavailable.", error));
@@ -110,7 +123,7 @@ function openDetails(property) {
     '</b></p><p><small>Approach road</small><b>', property.road,
     '</b></p></div><ul>', property.features.map((feature) => '<li>✓ ' + feature + '</li>').join(""),
     '</ul><button class="enquire">Schedule a site visit →</button>',
-    '<p class="location-note">Pin shown at the supplied property location. Site pad is a location highlight, not a legal boundary.</p></div>'
+    '<p class="location-note">', property.exactLocation ? 'Exact site location is visible to authorised staff.' : 'Customer privacy view: this pin shows only the approximate locality within about 500 metres. Contact us for a guided site visit.', '</p></div>'
   ].join("");
   document.querySelector("#details").showModal();
   let currentSlide = 0;

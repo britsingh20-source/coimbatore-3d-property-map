@@ -6,21 +6,27 @@ const json=(data,status=200,env={})=>new Response(JSON.stringify(data),{status,h
 const bearer=request=>{const value=request.headers.get("authorization")||"";return value.startsWith("Bearer ")?value.slice(7):"";};
 const clean=value=>String(value??"").trim();
 
-async function editorSession(request,env){
+async function internalSession(request,env){
   const token=bearer(request);if(!token)return null;
   const row=await env.DB.prepare("SELECT user_label,last_activity_at,active FROM telecaller_sessions WHERE token=? AND active=1").bind(token).first();
-  if(!row||!["Administrator","Director"].includes(row.user_label))return null;
+  if(!row)return null;
   const last=Date.parse(String(row.last_activity_at||"").replace(" ","T")+"Z");
   if(!Number.isFinite(last)||Date.now()-last>10*60*1000)return null;
   await env.DB.prepare("UPDATE telecaller_sessions SET last_activity_at=CURRENT_TIMESTAMP WHERE token=?").bind(token).run();return row;
 }
+async function editorSession(request,env){const session=await internalSession(request,env);return session&&["Administrator","Director"].includes(session.user_label)?session:null;}
 async function directorSession(request,env){const session=await editorSession(request,env);return session?.user_label==="Director"?session:null;}
 function slug(value){return clean(value).toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,48)||"property";}
 function parseCoordinates(value){const parts=clean(value).split(",").map(Number);return parts.length===2&&parts.every(Number.isFinite)?parts:null;}
-async function listProperties(env){
+function approximateCoordinates(property){
+  let hash=0;for(const char of property.id)hash=(hash*31+char.charCodeAt(0))>>>0;
+  const distance=450+(hash%101),bearing=(hash%360)*Math.PI/180,lat=Number(property.latitude),lng=Number(property.longitude);
+  return [lng+(distance*Math.sin(bearing))/(111320*Math.max(.2,Math.cos(lat*Math.PI/180))),lat+(distance*Math.cos(bearing))/111320];
+}
+async function listProperties(env,exact=false){
   const properties=(await env.DB.prepare("SELECT * FROM properties WHERE active=1 ORDER BY updated_at DESC").all()).results||[];
   const images=(await env.DB.prepare("SELECT property_id,slot,object_key,original_name FROM property_images ORDER BY id").all()).results||[];
-  return properties.map(p=>({id:p.id,title:p.title,type:p.property_kind,bedrooms:p.bedrooms||"",address:p.address,price:p.price,landArea:p.land_area||"",builtUpArea:p.built_up_area||"",facing:p.facing||"",approval:p.approval||"",road:p.road||"",coordinates:[p.longitude,p.latitude],features:JSON.parse(p.features_json||"[]"),tour:images.filter(i=>i.property_id===p.id).map(i=>({label:i.slot,url:`/api/property-media/${encodeURIComponent(i.object_key)}`,alt:i.original_name||`${i.slot} image`}))}));
+  return properties.map(p=>({id:p.id,title:p.title,type:p.property_kind,bedrooms:p.bedrooms||"",address:p.address,price:p.price,landArea:p.land_area||"",builtUpArea:p.built_up_area||"",facing:p.facing||"",approval:p.approval||"",road:p.road||"",coordinates:exact?[p.longitude,p.latitude]:approximateCoordinates(p),exactLocation:exact,locationAccuracy:exact?"exact":"approximate_500m",features:JSON.parse(p.features_json||"[]"),tour:images.filter(i=>i.property_id===p.id).map(i=>({label:i.slot,url:`/api/property-media/${encodeURIComponent(i.object_key)}`,alt:i.original_name||`${i.slot} image`}))}));
 }
 async function saveProperty(request,env){
   const session=await editorSession(request,env);if(!session)return json({error:"Director or Administrator session required"},401,env);
@@ -59,7 +65,7 @@ async function saveProperty(request,env){
 export default {async fetch(request,env,ctx){
   const url=new URL(request.url),path=url.pathname.replace(/\/$/,"")||"/";
   if(request.method==="OPTIONS"&&(path==="/api/properties"||path.startsWith("/api/properties/")||path.startsWith("/api/property-media/")))return new Response(null,{headers:cors(env)});
-  if(request.method==="GET"&&path==="/api/properties")return json({properties:await listProperties(env)},200,env);
+  if(request.method==="GET"&&path==="/api/properties")return json({properties:await listProperties(env,Boolean(await internalSession(request,env)))},200,env);
   const contactsMatch=path.match(/^\/api\/properties\/([^/]+)\/contacts$/);
   if(request.method==="GET"&&contactsMatch){
     if(!await directorSession(request,env))return json({error:"Director session required"},403,env);
