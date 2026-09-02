@@ -60,7 +60,7 @@ jobs:
         run: |
           set -euo pipefail
           npx wrangler r2 bucket create "$PROPERTY_MEDIA_BUCKET" >/tmp/r2-create.txt 2>&1 || true
-          npx wrangler r2 bucket list --json | jq -e --arg NAME "$PROPERTY_MEDIA_BUCKET" 'any(.[]; .name == $NAME)' >/dev/null
+          npx wrangler r2 bucket list | grep -F "$PROPERTY_MEDIA_BUCKET" >/dev/null
       - name: Generate Wrangler config
         shell: bash
         run: |

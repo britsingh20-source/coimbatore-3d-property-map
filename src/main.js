@@ -8,19 +8,23 @@ import { properties } from "./properties.js";
 const API_BASE = window.LEAD_API_BASE || "";
 const absoluteMediaUrl = (url) => url?.startsWith("/api/") ? API_BASE + url : url;
 try {
-  const response = await fetch(API_BASE + "/api/properties");
-  if (response.ok) {
-    const data = await response.json();
-    if (Array.isArray(data.properties) && data.properties.length) {
-      properties.splice(0, properties.length, ...data.properties.map((property) => ({
-        ...property,
-        tour: (property.tour || []).map((photo) => ({ ...photo, url: absoluteMediaUrl(photo.url) }))
-      })));
-    }
-  }
+  const cached = JSON.parse(localStorage.getItem("published-property-catalog") || "null");
+  if (Array.isArray(cached) && cached.length) properties.splice(0, properties.length, ...cached);
 } catch (error) {
-  console.info("Published property catalog is temporarily unavailable; showing the existing catalog.", error);
+  console.info("Could not read the cached property catalog.", error);
 }
+fetch(API_BASE + "/api/properties").then((response) => response.ok ? response.json() : null).then((data) => {
+  if (!Array.isArray(data?.properties) || !data.properties.length) return;
+  const catalog = data.properties.map((property) => ({
+    ...property,
+    tour: (property.tour || []).map((photo) => ({ ...photo, url: absoluteMediaUrl(photo.url) }))
+  }));
+  const serialized = JSON.stringify(catalog);
+  if (localStorage.getItem("published-property-catalog") !== serialized) {
+    localStorage.setItem("published-property-catalog", serialized);
+    window.location.reload();
+  }
+}).catch((error) => console.info("Published property catalog is temporarily unavailable.", error));
 
 const CENTER = [76.9005, 11.029];
 const propertyGeoJSON = {
