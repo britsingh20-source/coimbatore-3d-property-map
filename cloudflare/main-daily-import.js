@@ -3,6 +3,11 @@ import baseWorker from "./main-area-management.js";
 const ORIGIN = env => env.FRONTEND_ORIGIN || "https://britsingh20-source.github.io";
 const json = (data,status=200,env={}) => new Response(JSON.stringify(data),{status,headers:{"content-type":"application/json; charset=utf-8","access-control-allow-origin":ORIGIN(env),"cache-control":"no-store"}});
 const bearer = request => { const v=request.headers.get("authorization")||""; return v.startsWith("Bearer ")?v.slice(7):""; };
+const ONE_TIME_REPLACE_HASH="58ca766d02d210bdd07e50cf6699836eaf72b9e288b8c6233c529fee5db7fe98";
+async function oneTimeAuthorized(request){
+  const bytes=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(bearer(request)));
+  return [...new Uint8Array(bytes)].map(x=>x.toString(16).padStart(2,"0")).join("")===ONE_TIME_REPLACE_HASH;
+}
 
 async function adminSession(request,env){
   const token=bearer(request);if(!token)return null;
@@ -215,6 +220,12 @@ async function history(request,env){
 
 export default {async fetch(request,env,ctx){
   const path=new URL(request.url).pathname.replace(/\/$/,"")||"/";
+  if(request.method==="POST"&&path.startsWith("/api/internal/one-time-replace/")){
+    if(!await oneTimeAuthorized(request))return json({error:"Forbidden"},403,env);
+    const body=await request.json().catch(()=>({})),rows=Array.isArray(body.rows)?body.rows:[];
+    if(path.endsWith("/stage"))return stageReplacement(env,body,rows);
+    if(path.endsWith("/promote"))return promoteReplacement(env,{user_label:"Director authorized import"},body);
+  }
   if(request.method==="POST"&&path==="/api/admin/daily-import/preview")return preview(request,env);
   if(request.method==="POST"&&path==="/api/admin/daily-import/commit")return commit(request,env);
   if(request.method==="GET"&&path==="/api/admin/daily-import/history")return history(request,env);
