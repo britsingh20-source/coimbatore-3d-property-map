@@ -71,13 +71,32 @@ async function validateRows(env,rows,importDate){
   return {summary,rows:checked};
 }
 
+function validateReplacementRows(rows,importDate){
+  const checked=[],phones=new Set();let india=0,international=0;
+  for(let i=0;i<rows.length;i++){
+    const row=rows[i]||{},p=classifyPhone(row.phone||row["Phone Number"]||row.mobile||row.number);
+    const item={row:i+2,raw_phone:row.phone||row["Phone Number"]||row.mobile||row.number||"",name:String(row.name||row["Customer Name"]||"").trim(),source:String(row.source||row.Source||"Lead database replacement").trim()||"Lead database replacement",notes:String(row.notes||row.Notes||"").trim(),received_at:normalizeReceivedAt(row.received_at||row["Received At"]||row.received_datetime,importDate)};
+    if(!p.ok){checked.push({...item,status:"needs_review",reason:p.reason});continue;}
+    item.phone=p.phone;item.display_phone=p.display;item.region=p.region;phones.add(p.phone);
+    if(p.region==="India")india++;else international++;
+    checked.push({...item,status:"valid_activity"});
+  }
+  const invalid=checked.filter(x=>x.status==="needs_review").length;
+  return {rows:checked,summary:{total_rows:rows.length,valid_rows:rows.length-invalid,unique_leads:phones.size,repeat_occurrences:rows.length-invalid-phones.size,needs_review:invalid,india_count:india,international_count:international}};
+}
+
 async function preview(request,env){
   const session=await adminSession(request,env);
   if(!session)return json({error:"Session expired",expired:true},401,env);
   if(session.forbidden)return json({error:"Daily Lead Import is available to Administrator and Director only"},403,env);
   const body=await request.json().catch(()=>({})),rows=Array.isArray(body.rows)?body.rows:[];
   if(!rows.length)return json({error:"No Excel rows received"},422,env);
-  if(rows.length>500)return json({error:"Maximum 500 rows per import"},422,env);
+  if(rows.length>1000)return json({error:"Maximum 1,000 rows per import"},422,env);
+  if(body.mode==="replace"){
+    const result=validateReplacementRows(rows,body.import_date);
+    const current=await env.DB.prepare("SELECT COUNT(*) count FROM leads").first();
+    return json({ok:true,mode:"replace",current_leads:Number(current?.count||0),...result},200,env);
+  }
   const result=await validateRows(env,rows,body.import_date);
   return json({ok:true,...result},200,env);
 }
@@ -88,7 +107,8 @@ async function commit(request,env){
   if(session.forbidden)return json({error:"Daily Lead Import is available to Administrator and Director only"},403,env);
   const body=await request.json().catch(()=>({})),rows=Array.isArray(body.rows)?body.rows:[];
   if(!rows.length)return json({error:"No Excel rows received"},422,env);
-  if(rows.length>500)return json({error:"Maximum 500 rows per import"},422,env);
+  if(rows.length>1000)return json({error:"Maximum 1,000 rows per import"},422,env);
+  if(body.mode==="replace")return replaceDatabase(env,session,body,rows);
   const importDate=/^\d{4}-\d{2}-\d{2}$/.test(String(body.import_date||""))?String(body.import_date):new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Kolkata",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date());
   const validation=await validateRows(env,rows,importDate);
   let created=0,updated=0;
@@ -121,6 +141,33 @@ async function commit(request,env){
     import_date,source_file,total_rows,valid_rows,new_leads,repeat_callers,file_duplicates,needs_review,india_count,international_count,imported_by
   ) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).bind(importDate,String(body.source_file||"Daily lead Excel"),validation.summary.total_rows,validation.summary.valid_rows,created,updated,validation.summary.file_duplicates,validation.summary.needs_review,validation.summary.india_count,validation.summary.international_count,session.user_label).run();
   return json({ok:true,import_date:importDate,created,repeat_callers_updated:updated,summary:validation.summary},200,env);
+}
+
+async function replaceDatabase(env,session,body,rows){
+  const validation=validateReplacementRows(rows,body.import_date);
+  if(validation.summary.needs_review)return json({error:`Replacement stopped: ${validation.summary.needs_review} rows have invalid phone numbers`},422,env);
+  const expected=Number(body.expected_current_leads),current=await env.DB.prepare("SELECT COUNT(*) count FROM leads").first(),currentCount=Number(current?.count||0);
+  if(!Number.isInteger(expected)||expected!==currentCount)return json({error:`CRM changed after preview. Expected ${expected} current leads but found ${currentCount}. Preview again.`},409,env);
+  if(String(body.confirmation||"")!==`REPLACE ${currentCount} LEADS`)return json({error:`Type REPLACE ${currentCount} LEADS to confirm`},422,env);
+  const batchId=crypto.randomUUID(),valid=validation.rows;
+  for(let i=0;i<valid.length;i+=75){
+    await env.DB.batch(valid.slice(i,i+75).map((item,j)=>env.DB.prepare("INSERT INTO lead_replace_staging(batch_id,row_no,phone,display_phone,name,source,notes,received_at,region) VALUES(?,?,?,?,?,?,?,?,?)").bind(batchId,i+j+1,item.phone,item.display_phone,item.name||null,item.source,item.notes||null,item.received_at,item.region)));
+  }
+  try{
+    const [leads,activities]=await Promise.all([env.DB.prepare("SELECT * FROM leads ORDER BY id").all(),env.DB.prepare("SELECT * FROM lead_activity ORDER BY lead_id,id").all()]);
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO lead_replacement_backups(source_file,old_lead_count,new_lead_count,new_activity_count,leads_json,activities_json,replaced_by) VALUES(?,?,?,?,?,?,?)").bind(String(body.source_file||"Lead replacement Excel"),currentCount,validation.summary.unique_leads,validation.summary.valid_rows,JSON.stringify(leads.results||[]),JSON.stringify(activities.results||[]),session.user_label),
+      env.DB.prepare("DELETE FROM leads"),
+      env.DB.prepare(`INSERT INTO leads(phone,display_phone,name,status,source,first_received_at,last_received_at,notes,date_precision,transcription_review,pipeline_stage,contact_complete)
+        SELECT phone,MAX(display_phone),MAX(CASE WHEN name<>'' AND lower(name) NOT IN ('number visible','unknown') THEN name END),'Uncalled',GROUP_CONCAT(DISTINCT source),MIN(received_at),MAX(received_at),'Imported from verified four-day call register','exact',0,'incoming',0 FROM lead_replace_staging WHERE batch_id=? GROUP BY phone`).bind(batchId),
+      env.DB.prepare(`INSERT INTO lead_activity(lead_id,activity_type,caller,notes,created_at)
+        SELECT l.id,CASE WHEN ROW_NUMBER() OVER(PARTITION BY s.phone ORDER BY s.received_at,s.row_no)=1 THEN 'bulk_incoming_new' ELSE 'bulk_incoming_repeat' END,?,'Received ' || substr(s.received_at,1,10) || ' via ' || COALESCE(s.source,'Lead replacement') || CASE WHEN s.notes IS NULL OR s.notes='' THEN '' ELSE '. ' || s.notes END,s.received_at FROM lead_replace_staging s JOIN leads l ON l.phone=s.phone WHERE s.batch_id=?`).bind(session.user_label,batchId),
+      env.DB.prepare("INSERT INTO daily_lead_imports(import_date,source_file,total_rows,valid_rows,new_leads,repeat_callers,file_duplicates,needs_review,india_count,international_count,imported_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)").bind(String(body.import_date||"2026-09-01"),String(body.source_file||"Lead replacement Excel"),validation.summary.total_rows,validation.summary.valid_rows,validation.summary.unique_leads,validation.summary.repeat_occurrences,0,0,validation.summary.india_count,validation.summary.international_count,session.user_label),
+      env.DB.prepare("DELETE FROM lead_replace_staging WHERE batch_id=?").bind(batchId)
+    ]);
+  }catch(error){await env.DB.prepare("DELETE FROM lead_replace_staging WHERE batch_id=?").bind(batchId).run().catch(()=>{});throw error;}
+  const finalCount=await env.DB.prepare("SELECT COUNT(*) count FROM leads").first(),activityCount=await env.DB.prepare("SELECT COUNT(*) count FROM lead_activity").first();
+  return json({ok:true,mode:"replace",backup_created:true,removed:currentCount,created:Number(finalCount?.count||0),activities:Number(activityCount?.count||0),summary:validation.summary},200,env);
 }
 
 async function history(request,env){
