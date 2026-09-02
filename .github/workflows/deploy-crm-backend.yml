@@ -26,7 +26,6 @@ jobs:
       DR01_PIN: ${{ secrets.DR01_PIN }}
       DB_NAME: coimbatore-lead-crm
       WORKER_NAME: coimbatore-lead-crm-api
-      PROPERTY_MEDIA_BUCKET: coimbatore-property-media
     steps:
       - uses: actions/checkout@v4
         with:
@@ -55,12 +54,6 @@ jobs:
           fi
           [ -n "$DB_ID" ] || { echo "Unable to resolve D1 database id"; exit 1; }
           echo "db_id=$DB_ID" >> "$GITHUB_OUTPUT"
-      - name: Ensure property image bucket exists
-        shell: bash
-        run: |
-          set -euo pipefail
-          npx wrangler r2 bucket create "$PROPERTY_MEDIA_BUCKET" >/tmp/r2-create.txt 2>&1 || true
-          npx wrangler r2 bucket list | grep -F "$PROPERTY_MEDIA_BUCKET" >/dev/null
       - name: Generate Wrangler config
         shell: bash
         run: |
@@ -75,9 +68,6 @@ jobs:
           binding = "DB"
           database_name = "${DB_NAME}"
           database_id = "${{ steps.d1.outputs.db_id }}"
-          [[r2_buckets]]
-          binding = "PROPERTY_MEDIA"
-          bucket_name = "${PROPERTY_MEDIA_BUCKET}"
           EOF
       - name: Initialize D1 schema
         shell: bash

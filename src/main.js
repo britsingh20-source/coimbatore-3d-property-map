@@ -456,6 +456,22 @@ function resetPropertyEditor() {
   document.querySelector("#admin-save-notice").hidden = true;
   renderMediaSlots();
 }
+async function prepareImage(file) {
+  if (file.size <= 350000) return file;
+  const url = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    await new Promise((resolve, reject) => { image.onload = resolve; image.onerror = reject; image.src = url; });
+    const scale = Math.min(1, 1600 / Math.max(image.naturalWidth, image.naturalHeight));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.78));
+    if (!blob) throw new Error("Image preparation failed");
+    return new File([blob], file.name.replace(/\.[^.]+$/, "") + ".jpg", { type: "image/jpeg" });
+  } finally { URL.revokeObjectURL(url); }
+}
 editorForm.elements.type.addEventListener("change", renderMediaSlots);
 renderMediaSlots();
 document.querySelectorAll("[data-edit-property]").forEach((button) => {
@@ -486,7 +502,10 @@ editorForm.addEventListener("submit", async (event) => {
   if (!hasPoster) { notice.className = "error"; notice.textContent = "Please select the required Front Poster image."; return; }
   const formData = new FormData(editorForm);
   if (editingPropertyId) formData.set("id", editingPropertyId);
-  selectedMedia.forEach(({ file }, slot) => formData.set("image_" + slot, file, file.name));
+  for (const [slot, media] of selectedMedia) {
+    const file = await prepareImage(media.file);
+    formData.set("image_" + slot, file, file.name);
+  }
   const token = window.CRM_SESSION?.token?.() || localStorage.getItem("crm-telecaller-session-token") || "";
   submit.disabled = true;
   submit.textContent = "Uploading…";
