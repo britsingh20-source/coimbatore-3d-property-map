@@ -26,6 +26,7 @@ jobs:
       DR01_PIN: ${{ secrets.DR01_PIN }}
       DB_NAME: coimbatore-lead-crm
       WORKER_NAME: coimbatore-lead-crm-api
+      PROPERTY_MEDIA_BUCKET: coimbatore-property-media
     steps:
       - uses: actions/checkout@v4
         with:
@@ -54,12 +55,18 @@ jobs:
           fi
           [ -n "$DB_ID" ] || { echo "Unable to resolve D1 database id"; exit 1; }
           echo "db_id=$DB_ID" >> "$GITHUB_OUTPUT"
+      - name: Ensure property image bucket exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler r2 bucket create "$PROPERTY_MEDIA_BUCKET" >/tmp/r2-create.txt 2>&1 || true
+          npx wrangler r2 bucket list --json | jq -e --arg NAME "$PROPERTY_MEDIA_BUCKET" 'any(.[]; .name == $NAME)' >/dev/null
       - name: Generate Wrangler config
         shell: bash
         run: |
           cat > wrangler.crm.toml <<EOF
           name = "${WORKER_NAME}"
-          main = "cloudflare/main-performance.js"
+          main = "cloudflare/main-property-catalog.js"
           compatibility_date = "2026-09-01"
           workers_dev = true
           [vars]
@@ -68,6 +75,9 @@ jobs:
           binding = "DB"
           database_name = "${DB_NAME}"
           database_id = "${{ steps.d1.outputs.db_id }}"
+          [[r2_buckets]]
+          binding = "PROPERTY_MEDIA"
+          bucket_name = "${PROPERTY_MEDIA_BUCKET}"
           EOF
       - name: Initialize D1 schema
         shell: bash
@@ -84,6 +94,7 @@ jobs:
           npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/area_master_priority.sql
           npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/primary_working_areas.sql
           npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/daily_lead_import.sql
+          npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/property_catalog.sql
       - name: Migrate existing session table
         shell: bash
         run: |

@@ -5,6 +5,23 @@ import "leaflet/dist/leaflet.css";
 import "./style.css";
 import { properties } from "./properties.js";
 
+const API_BASE = window.LEAD_API_BASE || "";
+const absoluteMediaUrl = (url) => url?.startsWith("/api/") ? API_BASE + url : url;
+try {
+  const response = await fetch(API_BASE + "/api/properties");
+  if (response.ok) {
+    const data = await response.json();
+    if (Array.isArray(data.properties) && data.properties.length) {
+      properties.splice(0, properties.length, ...data.properties.map((property) => ({
+        ...property,
+        tour: (property.tour || []).map((photo) => ({ ...photo, url: absoluteMediaUrl(photo.url) }))
+      })));
+    }
+  }
+} catch (error) {
+  console.info("Published property catalog is temporarily unavailable; showing the existing catalog.", error);
+}
+
 const CENTER = [76.9005, 11.029];
 const propertyGeoJSON = {
   type: "FeatureCollection",
@@ -38,9 +55,9 @@ document.querySelector("#app").innerHTML = [
           properties.map((property) => '<article><div class="property-mini-icon">' + (property.type === "Plot" ? "▱" : "⌂") + '</div><div><b>' + property.title + '</b><small>' + property.address + ' · ' + property.price + '</small></div><button data-edit-property="' + property.id + '">Edit ✎</button></article>').join("") +
         '</div></section>',
         '<section id="admin-editor" class="admin-section"><div class="admin-heading"><div><small>PROPERTY EDITOR</small><h2 id="editor-title">Update property</h2></div><button class="editor-back" data-admin-action="overview">← Back</button></div>',
-          '<form id="property-editor-form"><div class="admin-form-grid"><label>Property title<input name="title" placeholder="Example: Vadavalli 3 BHK Villa"></label><label>Property type<select name="type"><option>Plot</option><option>2 BHK Villa</option><option>3 BHK Villa</option><option>4 BHK Villa</option></select></label><label>Location<input name="address" placeholder="Area, locality, Coimbatore"></label><label>Price<input name="price" placeholder="₹58 L"></label><label>Land area<input name="landArea" placeholder="4.2 cents · 1,830 sq.ft."></label><label>Building area<input name="builtUpArea" placeholder="1,650 sq.ft."></label><label>Facing<input name="facing" placeholder="North"></label><label>Approval<input name="approval" placeholder="DTCP / Plan approved"></label><label>Road width<input name="road" placeholder="30 ft road"></label><label>Coordinates<input name="coordinates" placeholder="Longitude, Latitude"></label></div>',
-            '<div class="admin-media"><div><b>Hologram tour images</b><small>Choose or replace each property photograph</small></div><div class="media-slots">' + ["Elevation","Hall","Bedroom","Car Parking","Portico"].map((label) => '<button type="button"><i>＋</i><span>' + label + '</span></button>').join("") + '</div></div>',
-            '<div class="editor-actions"><button type="button" data-admin-action="overview">Cancel</button><button type="submit">Save Property</button></div><p id="admin-save-notice" hidden>Admin interface is ready. Secure cloud saving will be connected to this form.</p>',
+          '<form id="property-editor-form"><div class="admin-form-grid"><label>Property title<input name="title" required placeholder="Example: Vadavalli 3 BHK Villa"></label><label>Property type<select name="type"><option>Plot</option><option>Villa</option></select></label><label class="villa-only">Bedrooms<input name="bedrooms" placeholder="3 BHK"></label><label>Location<input name="address" required placeholder="Area, locality, Coimbatore"></label><label>Price<input name="price" required placeholder="₹58 L"></label><label>Land area<input name="landArea" placeholder="4.2 cents · 1,830 sq.ft."></label><label class="villa-only">Building area<input name="builtUpArea" placeholder="1,650 sq.ft."></label><label>Facing<input name="facing" placeholder="North"></label><label>Approval<input name="approval" placeholder="DTCP / Plan approved"></label><label>Road width<input name="road" placeholder="30 ft road"></label><label>Coordinates<input name="coordinates" required placeholder="Longitude, Latitude"></label><label class="form-wide">Amenities / features<input name="features" placeholder="Park, Water, Street lights (comma separated)"></label></div>',
+            '<div class="admin-media"><div><b>Property gallery</b><small id="media-help">Front Poster / Rate Card is required. Tap any box to choose from your gallery.</small></div><div id="media-slots" class="media-slots"></div></div>',
+            '<div class="editor-actions"><button type="button" data-admin-action="overview">Cancel</button><button id="property-save-button" type="submit">Save Property</button></div><p id="admin-save-notice" hidden></p>',
           '</form>',
         '</section>',
       '</main>',
@@ -390,26 +407,99 @@ document.querySelectorAll("[data-admin-section]").forEach((button) => {
   button.onclick = () => showAdminSection(button.dataset.adminSection);
 });
 document.querySelectorAll("[data-admin-action]").forEach((button) => {
-  button.onclick = () => showAdminSection(button.dataset.adminAction);
+  button.onclick = () => {
+    if (button.dataset.adminAction === "editor" && button.classList.contains("compact-add")) resetPropertyEditor();
+    showAdminSection(button.dataset.adminAction);
+  };
 });
+const MEDIA_SLOTS = {
+  Plot: ["Front Poster", "Plot / Site", "Road Access", "Amenities", "Layout / Approval", "Location View", "Rate Card"],
+  Villa: ["Front Poster", "Elevation", "Hall", "Bedroom", "Kitchen", "Car Parking", "Portico", "Amenities"]
+};
+const editorForm = document.querySelector("#property-editor-form");
+const selectedMedia = new Map();
+let editingPropertyId = "";
+let existingTour = [];
+
+function renderMediaSlots() {
+  const kind = editorForm.elements.type.value;
+  document.querySelectorAll(".villa-only").forEach((field) => field.hidden = kind !== "Villa");
+  document.querySelector("#media-help").textContent = kind === "Plot"
+    ? "Front Poster / Rate Card is required. Add plot, road, amenities and layout images."
+    : "Front-view poster is required. Add elevation, room, parking and amenity images.";
+  const current = new Map(existingTour.map((photo) => [photo.label, photo]));
+  document.querySelector("#media-slots").innerHTML = MEDIA_SLOTS[kind].map((slot) => {
+    const photo = selectedMedia.get(slot) || current.get(slot);
+    const preview = photo ? '<img src="' + (photo.preview || photo.url) + '" alt="' + slot + ' preview">' : '<i>＋</i>';
+    return '<label class="media-slot' + (photo ? ' selected' : '') + '">' + preview + '<span>' + slot + (slot === "Front Poster" ? " *" : "") + '</span><input type="file" accept="image/*" data-media-slot="' + slot + '"></label>';
+  }).join("");
+  document.querySelectorAll("[data-media-slot]").forEach((input) => input.onchange = () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    const old = selectedMedia.get(input.dataset.mediaSlot);
+    if (old?.preview) URL.revokeObjectURL(old.preview);
+    selectedMedia.set(input.dataset.mediaSlot, { file, preview: URL.createObjectURL(file) });
+    renderMediaSlots();
+  });
+}
+
+function resetPropertyEditor() {
+  editorForm.reset();
+  editingPropertyId = "";
+  existingTour = [];
+  selectedMedia.clear();
+  document.querySelector("#editor-title").textContent = "Add property";
+  document.querySelector("#admin-save-notice").hidden = true;
+  renderMediaSlots();
+}
+editorForm.elements.type.addEventListener("change", renderMediaSlots);
+renderMediaSlots();
 document.querySelectorAll("[data-edit-property]").forEach((button) => {
   button.onclick = () => {
     const property = properties.find((item) => item.id === button.dataset.editProperty);
     if (!property) return;
-    const form = document.querySelector("#property-editor-form");
-    ["title", "type", "address", "price", "landArea", "builtUpArea", "facing", "approval", "road"].forEach((field) => {
-      if (form.elements[field]) form.elements[field].value = property[field] || "";
+    selectedMedia.clear();
+    editingPropertyId = property.id;
+    existingTour = property.tour || [];
+    ["title", "bedrooms", "address", "price", "landArea", "builtUpArea", "facing", "approval", "road"].forEach((field) => {
+      if (editorForm.elements[field]) editorForm.elements[field].value = property[field] || "";
     });
-    form.elements.coordinates.value = property.coordinates.join(", ");
+    editorForm.elements.type.value = property.type === "Plot" ? "Plot" : "Villa";
+    editorForm.elements.features.value = (property.features || []).join(", ");
+    editorForm.elements.coordinates.value = property.coordinates.join(", ");
     document.querySelector("#editor-title").textContent = "Edit " + property.title;
     document.querySelector("#admin-save-notice").hidden = true;
+    renderMediaSlots();
     showAdminSection("editor");
   };
 });
-document.querySelector("#property-editor-form").addEventListener("submit", (event) => {
+editorForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  document.querySelector("#admin-save-notice").hidden = false;
-});
-document.querySelectorAll(".media-slots button").forEach((button) => {
-  button.onclick = () => button.classList.toggle("selected");
+  const notice = document.querySelector("#admin-save-notice");
+  const submit = document.querySelector("#property-save-button");
+  const hasPoster = selectedMedia.has("Front Poster") || existingTour.some((photo) => photo.label === "Front Poster");
+  notice.hidden = false;
+  if (!hasPoster) { notice.className = "error"; notice.textContent = "Please select the required Front Poster image."; return; }
+  const formData = new FormData(editorForm);
+  if (editingPropertyId) formData.set("id", editingPropertyId);
+  selectedMedia.forEach(({ file }, slot) => formData.set("image_" + slot, file, file.name));
+  const token = window.CRM_SESSION?.token?.() || localStorage.getItem("crm-telecaller-session-token") || "";
+  submit.disabled = true;
+  submit.textContent = "Uploading…";
+  notice.className = "";
+  notice.textContent = "Uploading images and saving the property. Please keep this page open.";
+  try {
+    const response = await fetch(API_BASE + "/api/properties", { method: "POST", headers: { Authorization: "Bearer " + token }, body: formData });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || "Could not save property");
+    notice.className = "success";
+    notice.textContent = "Property and gallery saved successfully. Refreshing…";
+    window.setTimeout(() => window.location.reload(), 700);
+  } catch (error) {
+    notice.className = "error";
+    notice.textContent = error.message;
+  } finally {
+    submit.disabled = false;
+    submit.textContent = "Save Property";
+  }
 });
