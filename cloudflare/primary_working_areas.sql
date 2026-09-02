@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS crm_migration_flags (
 -- Historical areas stay in area_master for old leads, but are hidden from active use.
 UPDATE area_master
 SET active = 0, updated_at = CURRENT_TIMESTAMP
-WHERE code NOT IN ('VDV','TDM','PMD','VPP','KRM','IDG','SRV','KLP','SLR')
+WHERE code NOT IN ('VDV','TDM','PMD','VPP','KRM','MTP','IDG','SRV','KLP','SLR')
   AND NOT EXISTS (
     SELECT 1 FROM crm_migration_flags WHERE key = 'primary-working-areas-v1'
   );
@@ -22,7 +22,16 @@ INSERT OR IGNORE INTO area_master(
 );
 
 UPDATE area_master SET active=1, updated_at=CURRENT_TIMESTAMP
-WHERE code IN ('VDV','TDM','PMD','VPP','KRM','IDG','SRV','KLP','SLR');
+WHERE code IN ('VDV','TDM','PMD','VPP','KRM','MTP','IDG','SRV','KLP','SLR');
+
+UPDATE areas SET active=1 WHERE code='MTP';
+
+-- Repair leads where the telecaller entered Mettupalayam text before MTP was
+-- available in the active area list.
+UPDATE leads
+SET area_code='MTP',updated_at=CURRENT_TIMESTAMP
+WHERE lower(trim(COALESCE(area_text,''))) IN ('mettupalayam','mettupalaiyam','mtp')
+  AND COALESCE(area_code,'')<>'MTP';
 
 INSERT OR IGNORE INTO areas(code,name)
 SELECT code,canonical_name FROM area_master WHERE code='VPP';
