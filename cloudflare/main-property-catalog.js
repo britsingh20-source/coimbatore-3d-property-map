@@ -14,6 +14,7 @@ async function editorSession(request,env){
   if(!Number.isFinite(last)||Date.now()-last>10*60*1000)return null;
   await env.DB.prepare("UPDATE telecaller_sessions SET last_activity_at=CURRENT_TIMESTAMP WHERE token=?").bind(token).run();return row;
 }
+async function directorSession(request,env){const session=await editorSession(request,env);return session?.user_label==="Director"?session:null;}
 function slug(value){return clean(value).toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,48)||"property";}
 function parseCoordinates(value){const parts=clean(value).split(",").map(Number);return parts.length===2&&parts.every(Number.isFinite)?parts:null;}
 async function listProperties(env){
@@ -45,13 +46,26 @@ async function saveProperty(request,env){
     await env.DB.prepare("INSERT INTO property_images(property_id,slot,object_key,image_data,content_type,original_name) VALUES(?,?,?,?,?,?) ON CONFLICT(property_id,slot) DO UPDATE SET object_key=excluded.object_key,image_data=excluded.image_data,content_type=excluded.content_type,original_name=excluded.original_name,created_at=CURRENT_TIMESTAMP").bind(id,slot,objectKey,bytes,value.type,value.name).run();
     uploaded++;
   }
+  if(session.user_label==="Director"){
+    for(const type of ["owner","manager","builder"]){
+      const name=clean(form.get(`${type}_name`)),phone=clean(form.get(`${type}_phone`));
+      if(phone)await env.DB.prepare("INSERT INTO property_contacts(property_id,contact_type,contact_name,contact_phone) VALUES(?,?,?,?) ON CONFLICT(property_id,contact_type) DO UPDATE SET contact_name=excluded.contact_name,contact_phone=excluded.contact_phone,updated_at=CURRENT_TIMESTAMP").bind(id,type,name||null,phone).run();
+      else await env.DB.prepare("DELETE FROM property_contacts WHERE property_id=? AND contact_type=?").bind(id,type).run();
+    }
+  }
   return json({ok:true,id,uploaded,property:(await listProperties(env)).find(p=>p.id===id)},200,env);
 }
 
 export default {async fetch(request,env,ctx){
   const url=new URL(request.url),path=url.pathname.replace(/\/$/,"")||"/";
-  if(request.method==="OPTIONS"&&(path==="/api/properties"||path.startsWith("/api/property-media/")))return new Response(null,{headers:cors(env)});
+  if(request.method==="OPTIONS"&&(path==="/api/properties"||path.startsWith("/api/properties/")||path.startsWith("/api/property-media/")))return new Response(null,{headers:cors(env)});
   if(request.method==="GET"&&path==="/api/properties")return json({properties:await listProperties(env)},200,env);
+  const contactsMatch=path.match(/^\/api\/properties\/([^/]+)\/contacts$/);
+  if(request.method==="GET"&&contactsMatch){
+    if(!await directorSession(request,env))return json({error:"Director session required"},403,env);
+    const contacts=(await env.DB.prepare("SELECT contact_type,contact_name,contact_phone FROM property_contacts WHERE property_id=? ORDER BY contact_type").bind(decodeURIComponent(contactsMatch[1])).all()).results||[];
+    return json({contacts},200,env);
+  }
   if(request.method==="POST"&&path==="/api/properties")return saveProperty(request,env);
   if(request.method==="GET"&&path.startsWith("/api/property-media/")){
     const key=decodeURIComponent(path.slice("/api/property-media/".length)),object=await env.DB.prepare("SELECT image_data,content_type FROM property_images WHERE object_key=?").bind(key).first();if(!object?.image_data)return new Response("Not found",{status:404,headers:cors(env)});

@@ -60,6 +60,7 @@ document.querySelector("#app").innerHTML = [
         '</div></section>',
         '<section id="admin-editor" class="admin-section"><div class="admin-heading"><div><small>PROPERTY EDITOR</small><h2 id="editor-title">Update property</h2></div><button class="editor-back" data-admin-action="overview">← Back</button></div>',
           '<form id="property-editor-form"><div class="admin-form-grid"><label>Property title<input name="title" required placeholder="Example: Vadavalli 3 BHK Villa"></label><label>Property type<select name="type"><option>Plot</option><option>Villa</option></select></label><label class="villa-only">Bedrooms<input name="bedrooms" placeholder="3 BHK"></label><label>Location<input name="address" required placeholder="Area, locality, Coimbatore"></label><label>Price<input name="price" required placeholder="₹58 L"></label><label>Land area<input name="landArea" placeholder="4.2 cents · 1,830 sq.ft."></label><label class="villa-only">Building area<input name="builtUpArea" placeholder="1,650 sq.ft."></label><label>Facing<input name="facing" placeholder="North"></label><label>Approval<input name="approval" placeholder="DTCP / Plan approved"></label><label>Road width<input name="road" placeholder="30 ft road"></label><label>Coordinates<input name="coordinates" required placeholder="Longitude, Latitude"></label><label class="form-wide">Amenities / features<input name="features" placeholder="Park, Water, Street lights (comma separated)"></label></div>',
+            '<fieldset id="director-contact-fields" class="director-contact-fields" hidden><legend>Director-only contacts</legend><p>These numbers are protected and are never shown to customers, telecallers, Managers or Administrators.</p><div class="admin-form-grid"><label>Property owner name<input name="owner_name" placeholder="Owner name"></label><label>Property owner number<input name="owner_phone" inputmode="tel" placeholder="+91 98765 43210"></label><label>Property manager name<input name="manager_name" placeholder="Manager name"></label><label>Property manager number<input name="manager_phone" inputmode="tel" placeholder="+91 98765 43210"></label><label>Builder name<input name="builder_name" placeholder="Builder name"></label><label>Builder number<input name="builder_phone" inputmode="tel" placeholder="+91 98765 43210"></label></div></fieldset>',
             '<div class="admin-media"><div><b>Property gallery</b><small id="media-help">Front Poster / Rate Card is required. Tap any box to choose from your gallery.</small></div><div id="media-slots" class="media-slots"></div></div>',
             '<div class="editor-actions"><button type="button" data-admin-action="overview">Cancel</button><button id="property-save-button" type="submit">Save Property</button></div><p id="admin-save-notice" hidden></p>',
           '</form>',
@@ -402,6 +403,7 @@ function closeAdminPanel() {
 document.querySelector("#admin-open").onclick = () => {
   adminPanel.hidden = false;
   document.body.classList.add("admin-mode");
+  window.setTimeout(updateContactVisibility, 0);
   showAdminSection("overview");
 };
 document.querySelector("#admin-close").onclick = closeAdminPanel;
@@ -424,6 +426,8 @@ const editorForm = document.querySelector("#property-editor-form");
 const selectedMedia = new Map();
 let editingPropertyId = "";
 let existingTour = [];
+const isDirector = () => String(window.CRM_SESSION?.role?.() || window.CRM_SESSION?.user?.() || "").toLowerCase() === "director";
+function updateContactVisibility() { document.querySelector("#director-contact-fields").hidden = !isDirector(); }
 
 function renderMediaSlots() {
   const kind = editorForm.elements.type.value;
@@ -455,6 +459,7 @@ function resetPropertyEditor() {
   document.querySelector("#editor-title").textContent = "Add property";
   document.querySelector("#admin-save-notice").hidden = true;
   renderMediaSlots();
+  updateContactVisibility();
 }
 async function prepareImage(file) {
   if (file.size <= 350000) return file;
@@ -475,7 +480,7 @@ async function prepareImage(file) {
 editorForm.elements.type.addEventListener("change", renderMediaSlots);
 renderMediaSlots();
 document.querySelectorAll("[data-edit-property]").forEach((button) => {
-  button.onclick = () => {
+  button.onclick = async () => {
     const property = properties.find((item) => item.id === button.dataset.editProperty);
     if (!property) return;
     selectedMedia.clear();
@@ -490,6 +495,18 @@ document.querySelectorAll("[data-edit-property]").forEach((button) => {
     document.querySelector("#editor-title").textContent = "Edit " + property.title;
     document.querySelector("#admin-save-notice").hidden = true;
     renderMediaSlots();
+    updateContactVisibility();
+    if (isDirector()) {
+      try {
+        const token = window.CRM_SESSION?.token?.() || localStorage.getItem("crm-telecaller-session-token") || "";
+        const response = await fetch(API_BASE + "/api/properties/" + encodeURIComponent(property.id) + "/contacts", { headers: { Authorization: "Bearer " + token } });
+        const data = await response.json();
+        if (response.ok) (data.contacts || []).forEach((contact) => {
+          if (editorForm.elements[contact.contact_type + "_name"]) editorForm.elements[contact.contact_type + "_name"].value = contact.contact_name || "";
+          if (editorForm.elements[contact.contact_type + "_phone"]) editorForm.elements[contact.contact_type + "_phone"].value = contact.contact_phone || "";
+        });
+      } catch (error) { console.info("Director contact details could not be loaded.", error); }
+    }
     showAdminSection("editor");
   };
 });
@@ -501,6 +518,7 @@ editorForm.addEventListener("submit", async (event) => {
   notice.hidden = false;
   if (!hasPoster) { notice.className = "error"; notice.textContent = "Please select the required Front Poster image."; return; }
   const formData = new FormData(editorForm);
+  if (!isDirector()) ["owner_name","owner_phone","manager_name","manager_phone","builder_name","builder_phone"].forEach((field) => formData.delete(field));
   if (editingPropertyId) formData.set("id", editingPropertyId);
   for (const [slot, media] of selectedMedia) {
     const file = await prepareImage(media.file);
