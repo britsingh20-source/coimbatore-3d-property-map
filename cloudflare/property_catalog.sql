@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS property_images (
   slot TEXT NOT NULL,
   object_key TEXT NOT NULL UNIQUE,
   image_data BLOB,
+  image_base64 TEXT,
   content_type TEXT NOT NULL,
   original_name TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -44,3 +45,8 @@ CREATE TABLE IF NOT EXISTS property_contacts (
 
 CREATE INDEX IF NOT EXISTS idx_properties_active ON properties(active,updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_property_images_property ON property_images(property_id,slot);
+
+-- Correct older Google Maps coordinates that were saved as latitude,longitude.
+UPDATE properties
+SET longitude = latitude, latitude = longitude, updated_at = CURRENT_TIMESTAMP
+WHERE longitude BETWEEN 8 AND 13 AND latitude BETWEEN 75 AND 80;

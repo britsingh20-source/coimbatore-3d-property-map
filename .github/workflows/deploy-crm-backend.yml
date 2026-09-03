@@ -85,6 +85,7 @@ jobs:
           npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/primary_working_areas.sql
           npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/daily_lead_import.sql
           npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/property_catalog.sql
+          npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --command "ALTER TABLE property_images ADD COLUMN image_base64 TEXT" || true
       - name: Migrate existing session table
         shell: bash
         run: |
