@@ -58,6 +58,7 @@ document.querySelector("#app").innerHTML = [
   '<nav class="view-controls" aria-label="Map view"><button id="view-toggle" class="active" aria-pressed="true"><span>◆</span> 3D view</button><button id="recenter" aria-label="Recenter map">⌖</button></nav>',
   '<section class="legend"><b><i></i> Plot</b><b><i class="orange"></i> Villa</b><small>Tap a budget pin</small></section>',
   '<dialog id="details"><button class="close" aria-label="Close">×</button><div id="detail-content"></div></dialog>',
+  '<div id="photo-viewer" class="photo-viewer" hidden><button type="button" aria-label="Close full image">×</button><img alt="Full property photograph"><small>Tap × to return to the property</small></div>',
   '<aside id="admin-panel" class="admin-shell" hidden>',
     '<div class="admin-topbar"><div class="panel-tabs"><button id="customer-panel-tab">Customer Panel</button><button class="active">Admin Panel</button></div><button id="admin-close" aria-label="Close admin panel">×</button></div>',
     '<div class="admin-layout">',
@@ -100,10 +101,11 @@ const defaultTour = [
 ];
 
 function tourSlide(photo, index) {
+  const isPoster = ["Front Poster", "Rate Card", "Layout / Approval"].includes(photo.label);
   const visual = photo.url
-    ? '<img src="' + photo.url + '" alt="' + (photo.alt || photo.label) + '" loading="lazy">'
+    ? '<img src="' + photo.url + '" data-full-image="' + photo.url + '" alt="' + (photo.alt || photo.label) + '" loading="lazy">'
     : '<div class="holo-placeholder scene-' + (photo.scene || "room") + '"><div class="holo-grid"></div><div class="holo-object"><i></i><i></i><i></i></div><small>Photo slot ready</small></div>';
-  return '<figure class="holo-slide' + (index === 0 ? " active" : "") + '" data-slide="' + index + '">' +
+  return '<figure class="holo-slide' + (index === 0 ? " active" : "") + (isPoster ? " poster-slide" : "") + '" data-slide="' + index + '">' +
     visual + '<figcaption><b>' + photo.label + '</b><span>Property tour</span></figcaption></figure>';
 }
 
@@ -137,7 +139,21 @@ function openDetails(property) {
   document.querySelectorAll("[data-tour]").forEach((button) => {
     button.onclick = () => showSlide(Number(button.dataset.tour));
   });
+  document.querySelectorAll("[data-full-image]").forEach((image) => {
+    image.onclick = () => openPhotoViewer(image.dataset.fullImage, image.alt);
+  });
 }
+
+const photoViewer = document.querySelector("#photo-viewer");
+function closePhotoViewer() { photoViewer.hidden = true; photoViewer.querySelector("img").removeAttribute("src"); }
+function openPhotoViewer(url, alt) {
+  const image = photoViewer.querySelector("img");
+  image.src = url;
+  image.alt = alt || "Full property photograph";
+  photoViewer.hidden = false;
+}
+photoViewer.querySelector("button").onclick = closePhotoViewer;
+photoViewer.onclick = (event) => { if (event.target === photoViewer) closePhotoViewer(); };
 
 function makeMarker(property) {
   const marker = document.createElement("button");
