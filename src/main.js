@@ -57,8 +57,7 @@ document.querySelector("#app").innerHTML = [
   '<form id="location-search" role="search"><span>⌕</span><input id="location-query" type="search" placeholder="Search Somayampalayam, Kalapatti…" aria-label="Search a location in Coimbatore" autocomplete="off"><button type="submit">Search</button><div id="search-results" hidden></div></form>',
   '<nav class="view-controls" aria-label="Map view"><button id="view-toggle" class="active" aria-pressed="true"><span>◆</span> 3D view</button><button id="recenter" aria-label="Recenter map">⌖</button></nav>',
   '<section class="legend"><b><i></i> Plot</b><b><i class="orange"></i> Villa</b><small>Tap a budget pin</small></section>',
-  '<dialog id="details"><button class="close" aria-label="Close">×</button><div id="detail-content"></div></dialog>',
-  '<div id="photo-viewer" class="photo-viewer" hidden><button type="button" aria-label="Close full image">×</button><img alt="Full property photograph"><small>Tap × to return to the property</small></div>',
+  '<dialog id="details"><button class="close" aria-label="Close">×</button><div id="detail-content"></div><div id="photo-viewer" class="photo-viewer" hidden><button type="button" aria-label="Close full image">×</button><img alt="Full property photograph"><small>Tap × to return to the property</small></div></dialog>',
   '<aside id="admin-panel" class="admin-shell" hidden>',
     '<div class="admin-topbar"><div class="panel-tabs"><button id="customer-panel-tab">Customer Panel</button><button class="active">Admin Panel</button></div><button id="admin-close" aria-label="Close admin panel">×</button></div>',
     '<div class="admin-layout">',
@@ -103,7 +102,7 @@ const defaultTour = [
 function tourSlide(photo, index) {
   const isPoster = ["Front Poster", "Rate Card", "Layout / Approval"].includes(photo.label);
   const visual = photo.url
-    ? '<img src="' + photo.url + '" data-full-image="' + photo.url + '" alt="' + (photo.alt || photo.label) + '" loading="lazy">'
+    ? '<img src="' + photo.url + '" data-full-image="' + photo.url + '" alt="' + (photo.alt || photo.label) + '" loading="lazy"' + (isPoster ? ' style="object-fit:contain;background:#062c2e;filter:none"' : '') + '>'
     : '<div class="holo-placeholder scene-' + (photo.scene || "room") + '"><div class="holo-grid"></div><div class="holo-object"><i></i><i></i><i></i></div><small>Photo slot ready</small></div>';
   return '<figure class="holo-slide' + (index === 0 ? " active" : "") + (isPoster ? " poster-slide" : "") + '" data-slide="' + index + '">' +
     visual + '<figcaption><b>' + photo.label + '</b><span>Property tour</span></figcaption></figure>';
@@ -111,6 +110,7 @@ function tourSlide(photo, index) {
 
 function openDetails(property) {
   const tour = property.tour?.length ? property.tour : defaultTour;
+  const whatsappText = encodeURIComponent("Hello, I would like to schedule a site visit for " + property.title + " at " + property.address + ". Price: " + property.price + ".");
   document.querySelector("#detail-content").innerHTML = [
     '<section class="hologram-tour"><div class="holo-title"><span>◈ HOLOGRAM TOUR</span><small>Swipe through property spaces</small></div>',
     '<div class="holo-stage">', tour.map(tourSlide).join(""),
@@ -124,7 +124,7 @@ function openDetails(property) {
     '</b></p><p><small>Approval</small><b>', property.approval,
     '</b></p><p><small>Approach road</small><b>', property.road,
     '</b></p></div><ul>', property.features.map((feature) => '<li>✓ ' + feature + '</li>').join(""),
-    '</ul><button class="enquire">Schedule a site visit →</button>',
+    '</ul><a class="enquire" href="https://wa.me/919003787621?text=', whatsappText, '" target="_blank" rel="noopener">Schedule a site visit on WhatsApp →</a>',
     '<p class="location-note">', property.exactLocation ? 'Exact site location is visible to authorised staff.' : 'Customer privacy view: this pin shows only the approximate locality within about 500 metres. Contact us for a guided site visit.', '</p></div>'
   ].join("");
   document.querySelector("#details").showModal();
