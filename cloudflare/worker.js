@@ -72,13 +72,6 @@ async function sessionFor(request,env,{touch=false}={}){
   const token=bearer(request); if(!token)return null;
   let s=await env.DB.prepare("SELECT * FROM telecaller_sessions WHERE token=? AND active=1").bind(token).first();
   if(!s)return null;
-  const now=Date.now(), last=Date.parse(String(s.last_activity_at).replace(" ","T")+"Z"), callStarted=s.call_started_at?Date.parse(String(s.call_started_at).replace(" ","T")+"Z"):0;
-  const idleMs=now-last;
-  const callExpired=s.call_active && callStarted && now-callStarted>4*60*60*1000;
-  if((!s.call_active && idleMs>10*60*1000)||callExpired){
-    await env.DB.prepare("UPDATE telecaller_sessions SET active=0,logout_at=CURRENT_TIMESTAMP,logout_reason=? WHERE token=?").bind(callExpired?"call_timeout":"idle_10_minutes",token).run();
-    return null;
-  }
   if(touch){await env.DB.prepare("UPDATE telecaller_sessions SET last_activity_at=CURRENT_TIMESTAMP WHERE token=?").bind(token).run();s=await env.DB.prepare("SELECT * FROM telecaller_sessions WHERE token=?").bind(token).first();}
   return s;
 }
@@ -111,7 +104,7 @@ export default { async fetch(request,env){
   if(request.method==="OPTIONS")return new Response(null,{headers:{"access-control-allow-origin":allowedOrigin(env),"access-control-allow-methods":"GET,POST,PATCH,OPTIONS","access-control-allow-headers":"content-type,authorization"}});
   const url=new URL(request.url),path=url.pathname.replace(/\/$/,"")||"/";
   try{
-    if(request.method==="GET"&&path==="/api/health")return json({ok:true,service:"lead-crm",secureImport:true,timedSessions:true,employeePinAuth:true,unifiedStaffLogin:true},200,env);
+    if(request.method==="GET"&&path==="/api/health")return json({ok:true,service:"lead-crm",secureImport:true,timedSessions:false,manualLogoutOnly:true,employeePinAuth:true,unifiedStaffLogin:true},200,env);
 
     if(request.method==="POST"&&path==="/api/admin/staff/set-pin"){
       if(!env.IMPORT_TOKEN||bearer(request)!==env.IMPORT_TOKEN)return json({error:"Unauthorized"},401,env);
@@ -137,13 +130,13 @@ export default { async fetch(request,env){
       await env.DB.prepare("UPDATE telecaller_sessions SET active=0,logout_at=CURRENT_TIMESTAMP,logout_reason='new_login' WHERE user_label=? AND active=1").bind(user).run();
       const token=crypto.randomUUID()+crypto.randomUUID();
       await env.DB.prepare("INSERT INTO telecaller_sessions(token,user_label) VALUES(?,?)").bind(token,user).run();
-      return json({ok:true,token,employee_id:employeeId,user_label:user,role,login_at:new Date().toISOString(),idle_timeout_minutes:10},200,env);
+      return json({ok:true,token,employee_id:employeeId,user_label:user,role,login_at:new Date().toISOString(),automatic_logout:false},200,env);
     }
     if(request.method==="GET"&&path==="/api/session/me"){
       const s=await requireSession(request,env,false);if(!s)return json({error:"Session expired",expired:true},401,env);
       const cred=await env.DB.prepare("SELECT employee_id FROM telecaller_credentials WHERE user_label=?").bind(s.user_label).first();
       const employeeId=cred?.employee_id||null;
-      return json({ok:true,employee_id:employeeId,user_label:s.user_label,role:roleForEmployee(employeeId),login_at:s.login_at,last_activity_at:s.last_activity_at,call_active:!!s.call_active,idle_timeout_minutes:10},200,env);
+      return json({ok:true,employee_id:employeeId,user_label:s.user_label,role:roleForEmployee(employeeId),login_at:s.login_at,last_activity_at:s.last_activity_at,call_active:!!s.call_active,automatic_logout:false},200,env);
     }
     if(request.method==="POST"&&path==="/api/session/activity"){
       const s=await requireSession(request,env,true);if(!s)return json({error:"Session expired",expired:true},401,env);return json({ok:true,last_activity_at:new Date().toISOString()},200,env);

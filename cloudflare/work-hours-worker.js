@@ -25,9 +25,7 @@ async function sessionFor(req,env){
   const staff=STAFF[row.user_label];return staff?{...row,...staff}:null;
 }
 function effectiveEnd(row,now){
-  const login=parseDb(row.login_at);let end=row.logout_at?parseDb(row.logout_at):now;
-  const last=parseDb(row.last_activity_at);
-  if(Number.isFinite(last))end=Math.min(end,last+10*60*1000);
+  const login=parseDb(row.login_at);let end=row.active?now:parseDb(row.logout_at||row.last_activity_at);
   if(!Number.isFinite(end)||end<login)end=login;
   return end;
 }
@@ -44,7 +42,7 @@ export default {async fetch(req,env){
   if(req.method!=="GET"||url.pathname!=="/api/work-hours")return json({error:"Not found"},404);
   const viewer=await sessionFor(req,env);if(!viewer)return json({error:"Session expired"},401);
   const now=Date.now();const currentMonth=dateKeyIST(now).slice(0,7);const month=url.searchParams.get("month")||currentMonth;const bounds=monthBounds(month);if(!bounds)return json({error:"Invalid month"},400);
-  const rows=(await env.DB.prepare("SELECT user_label,login_at,last_activity_at,logout_at,active FROM telecaller_sessions WHERE login_at < ? AND COALESCE(logout_at,last_activity_at) >= ? ORDER BY login_at").bind(new Date(bounds.end).toISOString(),new Date(bounds.start-10*60*1000).toISOString()).all()).results||[];
+  const rows=(await env.DB.prepare("SELECT user_label,login_at,last_activity_at,logout_at,active FROM telecaller_sessions WHERE login_at < ? AND (active=1 OR COALESCE(logout_at,last_activity_at) >= ?) ORDER BY login_at").bind(new Date(bounds.end).toISOString(),new Date(bounds.start).toISOString()).all()).results||[];
   const labels=(viewer.role==="telecaller")?[viewer.user_label]:Object.keys(STAFF);
   const staff=labels.map(label=>({user_label:label,...STAFF[label],daily:{},total_ms:0,days_worked:0,average_ms:0,today_ms:0}));
   const byLabel=Object.fromEntries(staff.map(x=>[x.user_label,x]));

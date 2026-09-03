@@ -59,15 +59,11 @@ async function authenticatedViewer(request, env) {
     "SELECT user_label, login_at, last_activity_at, active FROM telecaller_sessions WHERE token=? AND active=1"
   ).bind(token).first();
   if (!row || !STAFF[row.user_label]) return null;
-  const last = parseDbTime(row.last_activity_at);
-  if (!Number.isFinite(last) || Date.now() - last > 10 * 60 * 1000) return null;
   return { user_label: row.user_label, ...STAFF[row.user_label] };
 }
 function effectiveEnd(row, now) {
   const login = parseDbTime(row.login_at);
-  let end = row.logout_at ? parseDbTime(row.logout_at) : now;
-  const last = parseDbTime(row.last_activity_at);
-  if (Number.isFinite(last)) end = Math.min(end, last + 10 * 60 * 1000);
+  let end = row.active ? now : parseDbTime(row.logout_at || row.last_activity_at);
   if (!Number.isFinite(end) || end < login) end = login;
   return end;
 }
@@ -95,8 +91,8 @@ async function workHours(request, env) {
   if (!bounds) return json({ error: "Invalid month" }, 400, env);
 
   const rows = (await env.DB.prepare(
-    "SELECT user_label, login_at, last_activity_at, logout_at, active FROM telecaller_sessions WHERE login_at < ? AND COALESCE(logout_at,last_activity_at) >= ? ORDER BY login_at"
-  ).bind(new Date(bounds.end).toISOString(), new Date(bounds.start - 10 * 60 * 1000).toISOString()).all()).results || [];
+    "SELECT user_label, login_at, last_activity_at, logout_at, active FROM telecaller_sessions WHERE login_at < ? AND (active=1 OR COALESCE(logout_at,last_activity_at) >= ?) ORDER BY login_at"
+  ).bind(new Date(bounds.end).toISOString(), new Date(bounds.start).toISOString()).all()).results || [];
 
   const labels = viewer.role === "telecaller" ? [viewer.user_label] : Object.keys(STAFF);
   const staff = labels.map(label => ({
