@@ -8,8 +8,6 @@ async function activeSession(request,env){
   const token=bearer(request);if(!token)return null;
   const row=await env.DB.prepare("SELECT user_label,last_activity_at,active FROM telecaller_sessions WHERE token=? AND active=1").bind(token).first();
   if(!row)return null;
-  const last=Date.parse(String(row.last_activity_at||"").replace(" ","T")+"Z");
-  if(!Number.isFinite(last)||Date.now()-last>10*60*1000)return null;
   await env.DB.prepare("UPDATE telecaller_sessions SET last_activity_at=CURRENT_TIMESTAMP WHERE token=?").bind(token).run();
   return row;
 }
