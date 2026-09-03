@@ -40,6 +40,18 @@ fetch(API_BASE + "/api/properties", { headers: startupToken ? { Authorization: "
 }).catch((error) => console.info("Published property catalog is temporarily unavailable.", error));
 
 const CENTER = [76.9005, 11.029];
+const KNOWN_AREAS = ["Vadavalli", "Saravanampatti", "Kalapatti", "Mettupalayam", "Thudiyalur", "Pannimadai", "Idigarai", "Sulur", "Veerappandi", "Pollachi", "Karamadai", "Somayampalayam", "Bommanampalayam"];
+function propertyArea(property) {
+  const text = (property.title + " " + property.address).toLowerCase();
+  return KNOWN_AREAS.find((area) => text.includes(area.toLowerCase())) || property.address.split(",")[0].trim() || "Other";
+}
+const areaGroups = properties.reduce((groups, property) => {
+  const area = propertyArea(property);
+  (groups[area] ||= []).push(property);
+  property.areaGroup = area;
+  return groups;
+}, {});
+const areaEntries = Object.entries(areaGroups).sort((a, b) => a[0].localeCompare(b[0]));
 const propertyGeoJSON = {
   type: "FeatureCollection",
   features: properties.map((property) => ({
@@ -53,8 +65,9 @@ document.querySelector("#app").innerHTML = [
   '<div id="map" aria-label="Interactive 3D property map of Vadavalli"></div>',
   '<div id="loading"><span></span><b>Building Vadavalli in 3D…</b><small id="load-note">Loading roads, terrain and properties</small></div>',
   '<header><div class="logo">CV</div><div><b>CoimbatoreVeedu</b><small id="map-mode">Vadavalli 3D Property Map</small></div><button id="admin-open" aria-label="Open admin panel" title="Admin panel">♙</button></header>',
-  '<section class="summary"><b>Vadavalli · 7 km radius</b><small>' + properties.length + ' properties available</small></section>',
+  '<section class="summary"><b>Coimbatore · All areas</b><small>' + properties.length + ' properties available</small></section>',
   '<form id="location-search" role="search"><span>⌕</span><input id="location-query" type="search" placeholder="Search Somayampalayam, Kalapatti…" aria-label="Search a location in Coimbatore" autocomplete="off"><button type="submit">Search</button><div id="search-results" hidden></div></form>',
+  '<aside id="area-filter" class="area-filter"><div><b>Properties by Area</b><button id="area-filter-toggle" type="button" aria-label="Show or hide area list">−</button></div><section><button type="button" class="active" data-property-area="All"><span>All Areas</span><strong>' + properties.length + '</strong></button>' + areaEntries.map(([area, items]) => '<button type="button" data-property-area="' + area + '"><span>' + area + '</span><strong>' + items.length + '</strong></button>').join("") + '</section></aside>',
   '<nav class="view-controls" aria-label="Map view"><button id="view-toggle" class="active" aria-pressed="true"><span>◆</span> 3D view</button><button id="recenter" aria-label="Recenter map">⌖</button></nav>',
   '<section class="legend"><b><i></i> Plot</b><b><i class="orange"></i> Villa</b><small>Tap a budget pin</small></section>',
   '<dialog id="details"><button class="close" aria-label="Close">×</button><div id="detail-content"></div><div id="photo-viewer" class="photo-viewer" hidden><button type="button" aria-label="Close full image">×</button><img alt="Full property photograph"><small>Tap × to return to the property</small></div></dialog>',
@@ -160,6 +173,7 @@ function makeMarker(property) {
   marker.className = property.type === "Plot" ? "marker" : "marker villa";
   marker.innerHTML = "<strong>" + property.price + "</strong><small>" + property.type + "</small>";
   marker.setAttribute("aria-label", "Open " + property.title);
+  marker.dataset.area = property.areaGroup;
   return marker;
 }
 
@@ -381,6 +395,31 @@ document.querySelector("#location-search").addEventListener("submit", (event) =>
 document.querySelector("#location-query").addEventListener("input", (event) => {
   if (!event.target.value.trim()) document.querySelector("#search-results").hidden = true;
 });
+
+function filterPropertiesByArea(area) {
+  const matches = area === "All" ? properties : (areaGroups[area] || []);
+  document.querySelectorAll("[data-property-area]").forEach((button) => button.classList.toggle("active", button.dataset.propertyArea === area));
+  document.querySelectorAll(".marker[data-area]").forEach((marker) => { marker.style.display = area === "All" || marker.dataset.area === area ? "" : "none"; });
+  document.querySelector(".summary b").textContent = area === "All" ? "Coimbatore · All areas" : area;
+  document.querySelector(".summary small").textContent = matches.length + (matches.length === 1 ? " property available" : " properties available");
+  if (!matches.length || !activeMap) return;
+  if (matches.length === 1) {
+    const coordinates = matches[0].coordinates;
+    if (renderer === "maplibre") activeMap.flyTo({ center: coordinates, zoom: 15.8, pitch: threeDimensional ? 60 : 0, duration: 1100 });
+    else activeMap.flyTo([coordinates[1], coordinates[0]], 16, { duration: 1 });
+  } else {
+    if (renderer === "maplibre") {
+      const bounds = matches.reduce((box, property) => box.extend(property.coordinates), new maplibregl.LngLatBounds(matches[0].coordinates, matches[0].coordinates));
+      activeMap.fitBounds(bounds, { padding: 90, maxZoom: 15.5, duration: 1100 });
+    } else activeMap.fitBounds(matches.map((property) => [property.coordinates[1], property.coordinates[0]]), { padding: [70, 70], maxZoom: 16 });
+  }
+}
+document.querySelectorAll("[data-property-area]").forEach((button) => button.onclick = () => filterPropertiesByArea(button.dataset.propertyArea));
+document.querySelector("#area-filter-toggle").onclick = () => {
+  const filter = document.querySelector("#area-filter");
+  filter.classList.toggle("collapsed");
+  document.querySelector("#area-filter-toggle").textContent = filter.classList.contains("collapsed") ? "+" : "−";
+};
 
 function resetView() {
   if (renderer === "maplibre") {
