@@ -39,7 +39,7 @@ function approximateCoordinates(property){
 async function listProperties(env,exact=false){
   const properties=(await env.DB.prepare("SELECT * FROM properties WHERE active=1 ORDER BY updated_at DESC").all()).results||[];
   const images=(await env.DB.prepare("SELECT property_id,slot,object_key,original_name FROM property_images ORDER BY id").all()).results||[];
-  return properties.map(p=>({id:p.id,title:p.title,type:p.property_kind,bedrooms:p.bedrooms||"",address:p.address,price:p.price,landArea:p.land_area||"",builtUpArea:p.built_up_area||"",facing:p.facing||"",approval:p.approval||"",road:p.road||"",coordinates:exact?[p.longitude,p.latitude]:approximateCoordinates(p),exactLocation:exact,locationAccuracy:exact?"exact":"approximate_500m",features:JSON.parse(p.features_json||"[]"),tour:images.filter(i=>i.property_id===p.id).map(i=>({label:i.slot,url:`/api/property-media/${encodeURIComponent(i.object_key)}`,alt:i.original_name||`${i.slot} image`}))}));
+  return properties.map(p=>({id:p.id,title:p.title,type:p.property_kind,bedrooms:p.bedrooms||"",address:p.address,price:p.price,landArea:p.land_area||"",builtUpArea:p.built_up_area||"",facing:p.facing||"",approval:p.approval||"",road:p.road||"",coordinates:exact?[p.longitude,p.latitude]:approximateCoordinates(p),exactLocation:exact,locationAccuracy:exact?"exact":"approximate_500m",features:JSON.parse(p.features_json||"[]"),tour:images.filter(i=>i.property_id===p.id).map(i=>({label:i.slot,url:`/api/property-media/${encodeURIComponent(i.object_key)}?v=2`,alt:i.original_name||`${i.slot} image`}))}));
 }
 async function saveProperty(request,env){
   const session=await editorSession(request,env);if(!session)return json({error:"Director or Administrator session required"},401,env);
