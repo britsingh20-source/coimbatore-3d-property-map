@@ -1,5 +1,6 @@
 name: Deploy CRM Backend to Cloudflare
 
+# Secret updates do not trigger GitHub Actions; touch this workflow to re-apply staff PIN secrets.
 on:
   push:
     branches: [main]
