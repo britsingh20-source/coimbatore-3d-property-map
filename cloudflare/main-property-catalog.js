@@ -17,7 +17,20 @@ async function internalSession(request,env){
 async function editorSession(request,env){const session=await internalSession(request,env);return session&&["Administrator","Director"].includes(session.user_label)?session:null;}
 async function directorSession(request,env){const session=await editorSession(request,env);return session?.user_label==="Director"?session:null;}
 function slug(value){return clean(value).toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,48)||"property";}
-function parseCoordinates(value){const parts=clean(value).split(",").map(Number);return parts.length===2&&parts.every(Number.isFinite)?parts:null;}
+function parseCoordinates(value){
+  const parts=clean(value).split(",").map(Number);if(parts.length!==2||!parts.every(Number.isFinite))return null;
+  if(parts[0]>=8&&parts[0]<=13&&parts[1]>=75&&parts[1]<=80)return [parts[1],parts[0]];
+  return parts;
+}
+function encodeBase64(buffer){const bytes=new Uint8Array(buffer);let result="";for(let i=0;i<bytes.length;i+=32768)result+=String.fromCharCode(...bytes.subarray(i,i+32768));return btoa(result);}
+function decodeBase64(value){const binary=atob(value),bytes=new Uint8Array(binary.length);for(let i=0;i<binary.length;i++)bytes[i]=binary.charCodeAt(i);return bytes;}
+function storedBytes(value){
+  if(value instanceof ArrayBuffer)return new Uint8Array(value);
+  if(ArrayBuffer.isView(value))return new Uint8Array(value.buffer,value.byteOffset,value.byteLength);
+  if(Array.isArray(value))return new Uint8Array(value);
+  if(Array.isArray(value?.data))return new Uint8Array(value.data);
+  return null;
+}
 function approximateCoordinates(property){
   let hash=0;for(const char of property.id)hash=(hash*31+char.charCodeAt(0))>>>0;
   const distance=450+(hash%101),bearing=(hash%360)*Math.PI/180,lat=Number(property.latitude),lng=Number(property.longitude);
@@ -48,8 +61,8 @@ async function saveProperty(request,env){
     if(!value.type.startsWith("image/"))return json({error:`${value.name} is not an image`},422,env);
     const slot=key.slice(6),old=await env.DB.prepare("SELECT object_key FROM property_images WHERE property_id=? AND slot=?").bind(id,slot).first();
     const ext=(value.name.split(".").pop()||"jpg").replace(/[^a-z0-9]/gi,"").slice(0,5)||"jpg",objectKey=`${id}/${slug(slot)}-${crypto.randomUUID()}.${ext}`;
-    const bytes=await value.arrayBuffer();
-    await env.DB.prepare("INSERT INTO property_images(property_id,slot,object_key,image_data,content_type,original_name) VALUES(?,?,?,?,?,?) ON CONFLICT(property_id,slot) DO UPDATE SET object_key=excluded.object_key,image_data=excluded.image_data,content_type=excluded.content_type,original_name=excluded.original_name,created_at=CURRENT_TIMESTAMP").bind(id,slot,objectKey,bytes,value.type,value.name).run();
+    const base64=encodeBase64(await value.arrayBuffer());
+    await env.DB.prepare("INSERT INTO property_images(property_id,slot,object_key,image_data,image_base64,content_type,original_name) VALUES(?,?,?,NULL,?,?,?) ON CONFLICT(property_id,slot) DO UPDATE SET object_key=excluded.object_key,image_data=NULL,image_base64=excluded.image_base64,content_type=excluded.content_type,original_name=excluded.original_name,created_at=CURRENT_TIMESTAMP").bind(id,slot,objectKey,base64,value.type,value.name).run();
     uploaded++;
   }
   if(session.user_label==="Director"){
@@ -74,8 +87,9 @@ export default {async fetch(request,env,ctx){
   }
   if(request.method==="POST"&&path==="/api/properties")return saveProperty(request,env);
   if(request.method==="GET"&&path.startsWith("/api/property-media/")){
-    const key=decodeURIComponent(path.slice("/api/property-media/".length)),object=await env.DB.prepare("SELECT image_data,content_type FROM property_images WHERE object_key=?").bind(key).first();if(!object?.image_data)return new Response("Not found",{status:404,headers:cors(env)});
-    const headers=new Headers(cors(env));headers.set("content-type",object.content_type||"image/jpeg");headers.set("cache-control","public,max-age=31536000,immutable");return new Response(object.image_data,{headers});
+    const key=decodeURIComponent(path.slice("/api/property-media/".length)),object=await env.DB.prepare("SELECT image_data,image_base64,content_type FROM property_images WHERE object_key=?").bind(key).first();
+    const bytes=object?.image_base64?decodeBase64(object.image_base64):storedBytes(object?.image_data);if(!bytes?.byteLength)return new Response("Not found",{status:404,headers:cors(env)});
+    const headers=new Headers(cors(env));headers.set("content-type",object.content_type||"image/jpeg");headers.set("content-length",String(bytes.byteLength));headers.set("cache-control","public,max-age=31536000,immutable");return new Response(bytes,{headers});
   }
   return baseWorker.fetch(request,env,ctx);
 }};
