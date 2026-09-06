@@ -86,7 +86,6 @@ async function summary(env,dateValue=null){
   const commentsRow=await env.DB.prepare(`SELECT COUNT(*) AS count FROM social_leads WHERE platform='instagram' AND keyword='AREA' AND ${localDateExpr}=?`).bind(date).first();
   const selectedRow=await env.DB.prepare(`SELECT COUNT(DISTINCT social_lead_id) AS count FROM social_lead_events WHERE event_type='landing_area_selected' AND ${localDateExpr}=?`).bind(date).first();
   const capturedRow=await env.DB.prepare(`SELECT COUNT(DISTINCT social_lead_id) AS count FROM social_lead_events WHERE event_type IN ('whatsapp_number_captured','instagram_phone_captured') AND ${localDateExpr}=?`).bind(date).first();
-  const crmNewRow=await env.DB.prepare(`SELECT COUNT(DISTINCT lead_id) AS count FROM social_lead_events WHERE event_type IN ('whatsapp_number_captured','instagram_phone_captured') AND lead_id IS NOT NULL AND ${localDateExpr}=?`).bind(date).first().catch(()=>null);
 
   const byArea=(await env.DB.prepare(`
     SELECT COALESCE(sl.interested_area,'Not selected') AS area,
@@ -109,8 +108,7 @@ async function summary(env,dateValue=null){
       area_comments:Number(commentsRow?.count||0),
       area_selected:Number(selectedRow?.count||0),
       whatsapp_opened:Number(selectedRow?.count||0),
-      crm_leads_captured:Number(capturedRow?.count||0),
-      unique_crm_leads:Number(crmNewRow?.count||capturedRow?.count||0)
+      crm_leads_captured:Number(capturedRow?.count||0)
     },
     by_area:byArea
   };
