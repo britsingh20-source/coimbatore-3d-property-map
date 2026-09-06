@@ -1,4 +1,4 @@
-import baseWorker from './main-daily-import.js';
+import baseWorker from './main-property-catalog.js';
 import { detectSocialKeyword } from './social-keywords.js';
 
 const ORIGIN = env => env.FRONTEND_ORIGIN || 'https://britsingh20-source.github.io';
