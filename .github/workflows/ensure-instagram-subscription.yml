@@ -1,0 +1,57 @@
+name: Ensure Instagram Webhook Subscription
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/ensure-instagram-subscription.yml'
+  workflow_run:
+    workflows: ['Deploy CRM Backend to Cloudflare']
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ensure-instagram-subscription:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Subscribe Instagram account to required webhook fields
+        env:
+          INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ -n "${INSTAGRAM_ACCESS_TOKEN:-}" ] || { echo 'INSTAGRAM_ACCESS_TOKEN is missing'; exit 1; }
+
+          ME=$(curl -fsS --get 'https://graph.instagram.com/me' \
+            --data-urlencode 'fields=id,user_id,account_type' \
+            --data-urlencode "access_token=${INSTAGRAM_ACCESS_TOKEN}")
+          IG_ID=$(echo "$ME" | jq -r '.user_id // .id // empty')
+          [ -n "$IG_ID" ] || { echo 'Unable to resolve Instagram professional account id'; exit 1; }
+          echo "Instagram account resolved; account_type=$(echo "$ME" | jq -r '.account_type // "unknown"')"
+
+          HTTP_CODE=$(curl -sS -o /tmp/subscribe.json -w '%{http_code}' -X POST \
+            "https://graph.instagram.com/v26.0/${IG_ID}/subscribed_apps" \
+            --data-urlencode 'subscribed_fields=comments,messages,messaging_postbacks' \
+            --data-urlencode "access_token=${INSTAGRAM_ACCESS_TOKEN}")
+          echo "Subscription update HTTP status: ${HTTP_CODE}"
+          if [ "$HTTP_CODE" != '200' ]; then
+            jq '{error_code:.error.code,error_type:.error.type,error_subcode:.error.error_subcode,message:.error.message}' /tmp/subscribe.json || cat /tmp/subscribe.json
+            exit 1
+          fi
+          jq -e '.success == true' /tmp/subscribe.json >/dev/null
+
+          VERIFY_CODE=$(curl -sS -o /tmp/subscriptions.json -w '%{http_code}' \
+            "https://graph.instagram.com/v26.0/${IG_ID}/subscribed_apps?access_token=${INSTAGRAM_ACCESS_TOKEN}")
+          echo "Subscription verification HTTP status: ${VERIFY_CODE}"
+          [ "$VERIFY_CODE" = '200' ] || { cat /tmp/subscriptions.json; exit 1; }
+
+          for FIELD in comments messages messaging_postbacks; do
+            HAS_FIELD=$(jq -r --arg FIELD "$FIELD" '[.data[]?.subscribed_fields[]?] | any(. == $FIELD)' /tmp/subscriptions.json)
+            echo "${FIELD}=${HAS_FIELD}"
+            [ "$HAS_FIELD" = 'true' ] || { echo "Required Instagram webhook field is not subscribed: ${FIELD}"; exit 1; }
+          done
+
+          echo 'Instagram webhook account subscription is healthy.'
