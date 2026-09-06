@@ -1,0 +1,61 @@
+name: Deploy Instagram Polling Worker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/deploy-instagram-polling-worker.yml'
+  workflow_run:
+    workflows: ['Deploy CRM Backend to Cloudflare']
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-instagram-polling:
+    if: ${{ github.event_name == 'push' || github.event.workflow_run.conclusion == 'success' || github.event.workflow_run.conclusion == 'failure' }}
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.R2_ACCOUNT_ID }}
+      DB_NAME: coimbatore-lead-crm
+      WORKER_NAME: coimbatore-lead-crm-api
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify Cloudflare credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ -n "${CLOUDFLARE_API_TOKEN:-}" ] || { echo 'CLOUDFLARE_API_TOKEN missing'; exit 1; }
+          [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ] || { echo 'CLOUDFLARE_ACCOUNT_ID missing'; exit 1; }
+      - name: Install Wrangler
+        run: npm install --no-save wrangler@latest
+      - name: Resolve D1 and deploy one-minute polling trigger
+        shell: bash
+        run: |
+          set -euo pipefail
+          LIST=$(curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/d1/database?per_page=100")
+          DB_ID=$(echo "$LIST" | jq -r --arg NAME "$DB_NAME" '.result[]? | select(.name==$NAME) | .uuid' | head -n1)
+          [ -n "$DB_ID" ] || { echo 'Unable to resolve D1 database'; exit 1; }
+          cat > wrangler.instagram-poll.toml <<EOF
+          name = "${WORKER_NAME}"
+          main = "cloudflare/main-meta-webhooks.js"
+          compatibility_date = "2026-09-01"
+          workers_dev = true
+          [vars]
+          FRONTEND_ORIGIN = "https://britsingh20-source.github.io"
+          [triggers]
+          crons = ["* * * * *"]
+          [[d1_databases]]
+          binding = "DB"
+          database_name = "${DB_NAME}"
+          database_id = "${DB_ID}"
+          EOF
+          npx wrangler deploy --config wrangler.instagram-poll.toml
+          echo 'Instagram comment polling is scheduled every minute.'
