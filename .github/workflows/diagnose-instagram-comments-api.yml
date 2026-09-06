@@ -1,0 +1,52 @@
+name: Diagnose Instagram Comments API
+
+on:
+  push:
+    paths:
+      - '.github/workflows/diagnose-instagram-comments-api.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose-comments-api:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check recent Instagram comments via API
+        env:
+          INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ -n "${INSTAGRAM_ACCESS_TOKEN:-}" ] || { echo 'TOKEN_PRESENT=false'; exit 1; }
+
+          ME=$(curl -fsS --get 'https://graph.instagram.com/me' \
+            --data-urlencode 'fields=id,user_id,account_type' \
+            --data-urlencode "access_token=${INSTAGRAM_ACCESS_TOKEN}")
+          IG_ID=$(echo "$ME" | jq -r '.user_id // .id // empty')
+          [ -n "$IG_ID" ] || { echo 'ACCOUNT_ID_RESOLVED=false'; exit 1; }
+          echo 'ACCOUNT_ID_RESOLVED=true'
+
+          HTTP_CODE=$(curl -sS -o /tmp/media.json -w '%{http_code}' --get "https://graph.instagram.com/v26.0/${IG_ID}/media" \
+            --data-urlencode 'fields=id,media_type,timestamp,comments.limit(100){id,text,timestamp,from}' \
+            --data-urlencode 'limit=25' \
+            --data-urlencode "access_token=${INSTAGRAM_ACCESS_TOKEN}")
+          echo "MEDIA_QUERY_HTTP_STATUS=${HTTP_CODE}"
+          if [ "$HTTP_CODE" != '200' ]; then
+            jq '{error_code:.error.code,error_type:.error.type,error_subcode:.error.error_subcode,message:.error.message}' /tmp/media.json || cat /tmp/media.json
+            exit 1
+          fi
+
+          MEDIA_COUNT=$(jq '.data | length' /tmp/media.json)
+          COMMENT_COUNT=$(jq '[.data[]?.comments?.data[]?] | length' /tmp/media.json)
+          KARAMADAI_COUNT=$(jq '[.data[]?.comments?.data[]? | select((.text // "") | ascii_upcase | contains("KARAMADAI"))] | length' /tmp/media.json)
+          echo "RECENT_MEDIA_COUNT=${MEDIA_COUNT}"
+          echo "RECENT_COMMENT_COUNT=${COMMENT_COUNT}"
+          echo "KARAMADAI_COMMENT_COUNT=${KARAMADAI_COUNT}"
+
+          if [ "$KARAMADAI_COUNT" -gt 0 ]; then
+            echo 'KARAMADAI_VISIBLE_VIA_API=true'
+          else
+            echo 'KARAMADAI_VISIBLE_VIA_API=false'
+          fi
