@@ -22,6 +22,7 @@
 <script>
 (() => {
   const API='https://coimbatore-lead-crm-api.britsingh20.workers.dev';
+  const WHATSAPP_NUMBER='918148127587';
   const AREAS=['Kalapatti','Saravanampatti','Vadavalli','Sulur','Karamadai','Kovilpalayam','Annur','Mettupalayam','Malumichampatti'];
   const params=new URLSearchParams(location.search);
   const ref=(params.get('ref')||'').trim().toUpperCase();
@@ -34,11 +35,28 @@
     return;
   }
 
+  function trackSelection(area){
+    const body=JSON.stringify({ref,area});
+    try {
+      if(navigator.sendBeacon){
+        const blob=new Blob([body],{type:'text/plain;charset=UTF-8'});
+        navigator.sendBeacon(`${API}/api/social/area/select`,blob);
+        return;
+      }
+    } catch (_) {}
+    try {
+      fetch(`${API}/api/social/area/select`,{method:'POST',headers:{'content-type':'application/json'},body,keepalive:true,mode:'cors'}).catch(()=>{});
+    } catch (_) {}
+  }
+
   AREAS.forEach(area=>{
+    const message=`Hi, I need property details in ${area}. Ref: ${ref}`;
+    const whatsapp=`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
     const link=document.createElement('a');
     link.className='area';
     link.textContent=area;
-    link.href=`${API}/api/social/area/go?ref=${encodeURIComponent(ref)}&area=${encodeURIComponent(area)}`;
+    link.href=whatsapp;
+    link.addEventListener('click',()=>trackSelection(area),{passive:true});
     box.appendChild(link);
   });
 })();
