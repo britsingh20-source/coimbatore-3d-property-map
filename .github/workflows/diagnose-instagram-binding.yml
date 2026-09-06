@@ -1,0 +1,50 @@
+name: Diagnose Instagram Binding
+
+on:
+  push:
+    paths:
+      - '.github/workflows/diagnose-instagram-binding.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose-binding:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify token and account webhook subscription
+        env:
+          INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ -n "${INSTAGRAM_ACCESS_TOKEN:-}" ] || { echo 'TOKEN_PRESENT=false'; exit 1; }
+          ME=$(curl -fsS "https://graph.instagram.com/me?fields=id,user_id,username,account_type&access_token=${INSTAGRAM_ACCESS_TOKEN}")
+          if echo "$ME" | jq -e '.error' >/dev/null 2>&1; then
+            echo 'TOKEN_VALID=false'
+            echo "$ME" | jq '{error_code:.error.code,error_type:.error.type,error_subcode:.error.error_subcode}'
+            exit 1
+          fi
+          IG_ID=$(echo "$ME" | jq -r '.user_id // .id // empty')
+          [ -n "$IG_ID" ] || { echo 'TOKEN_VALID=false'; echo 'ACCOUNT_ID_RESOLVED=false'; exit 1; }
+          echo 'TOKEN_VALID=true'
+          echo 'ACCOUNT_ID_RESOLVED=true'
+          echo "ACCOUNT_TYPE=$(echo "$ME" | jq -r '.account_type // "unknown"')"
+
+          HTTP_CODE=$(curl -sS -o /tmp/subs.json -w '%{http_code}' "https://graph.instagram.com/v26.0/${IG_ID}/subscribed_apps?access_token=${INSTAGRAM_ACCESS_TOKEN}")
+          echo "SUBSCRIPTION_HTTP_STATUS=${HTTP_CODE}"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo 'SUBSCRIPTION_QUERY_OK=false'
+            jq '{error_code:.error.code,error_type:.error.type,error_subcode:.error.error_subcode}' /tmp/subs.json || true
+            exit 1
+          fi
+          echo 'SUBSCRIPTION_QUERY_OK=true'
+          APP_COUNT=$(jq '.data | length' /tmp/subs.json)
+          echo "SUBSCRIBED_APP_COUNT=${APP_COUNT}"
+          HAS_COMMENTS=$(jq -r '[.data[]?.subscribed_fields[]?] | any(. == "comments")' /tmp/subs.json)
+          HAS_MESSAGES=$(jq -r '[.data[]?.subscribed_fields[]?] | any(. == "messages")' /tmp/subs.json)
+          HAS_POSTBACKS=$(jq -r '[.data[]?.subscribed_fields[]?] | any(. == "messaging_postbacks")' /tmp/subs.json)
+          echo "COMMENTS_SUBSCRIBED=${HAS_COMMENTS}"
+          echo "MESSAGES_SUBSCRIBED=${HAS_MESSAGES}"
+          echo "POSTBACKS_SUBSCRIBED=${HAS_POSTBACKS}"
