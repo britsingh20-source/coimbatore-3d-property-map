@@ -1,0 +1,53 @@
+name: Diagnose Social Lead Flow
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/diagnose-social-leads.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.R2_ACCOUNT_ID }}
+      DB_NAME: coimbatore-lead-crm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Wrangler
+        run: npm install --no-save wrangler@latest
+      - name: Resolve D1 database
+        id: d1
+        shell: bash
+        run: |
+          set -euo pipefail
+          LIST=$(curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/d1/database?per_page=100")
+          DB_ID=$(echo "$LIST" | jq -r --arg NAME "$DB_NAME" '.result[]? | select(.name==$NAME) | .uuid' | head -n1)
+          [ -n "$DB_ID" ] || { echo "Unable to resolve D1 database id"; exit 1; }
+          echo "db_id=$DB_ID" >> "$GITHUB_OUTPUT"
+      - name: Configure Wrangler
+        shell: bash
+        run: |
+          cat > wrangler.diag.toml <<EOF
+          name = "social-lead-diagnostics"
+          compatibility_date = "2026-09-01"
+          [[d1_databases]]
+          binding = "DB"
+          database_name = "${DB_NAME}"
+          database_id = "${{ steps.d1.outputs.db_id }}"
+          EOF
+      - name: Privacy-safe social lead status
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== SOCIAL LEAD COUNTS ==='
+          npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.diag.toml --command "SELECT COUNT(*) AS total, SUM(CASE WHEN keyword='KARAMADAI' THEN 1 ELSE 0 END) AS karamadai_total, SUM(CASE WHEN status='WhatsApp Link Sent' THEN 1 ELSE 0 END) AS whatsapp_links_sent FROM social_leads;"
+          echo '=== LATEST SOCIAL LEADS (NO USER IDENTIFIERS) ==='
+          npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.diag.toml --command "SELECT id,keyword,interested_area,status,created_at,updated_at FROM social_leads ORDER BY id DESC LIMIT 10;"
+          echo '=== LATEST SOCIAL EVENTS (NO PAYLOADS) ==='
+          npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.diag.toml --command "SELECT social_lead_id,event_type,created_at FROM social_lead_events ORDER BY id DESC LIMIT 20;"
