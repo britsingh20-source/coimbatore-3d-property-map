@@ -1,0 +1,72 @@
+name: Diagnose CRM Data Recovery
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/diagnose-crm-data-recovery.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.R2_ACCOUNT_ID }}
+      DB_NAME: coimbatore-lead-crm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Wrangler
+        run: npm install --no-save wrangler@latest
+      - name: Resolve D1 database
+        id: d1
+        shell: bash
+        run: |
+          set -euo pipefail
+          LIST=$(curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/d1/database?per_page=100")
+          DB_ID=$(echo "$LIST" | jq -r --arg NAME "$DB_NAME" '.result[]? | select(.name==$NAME) | .uuid' | head -n1)
+          [ -n "$DB_ID" ] || { echo "D1 database not found"; exit 1; }
+          echo "db_id=$DB_ID" >> "$GITHUB_OUTPUT"
+      - name: Generate Wrangler config
+        shell: bash
+        run: |
+          cat > wrangler.recovery.toml <<EOF
+          name = "crm-data-recovery-diagnostic"
+          compatibility_date = "2026-09-01"
+          [[d1_databases]]
+          binding = "DB"
+          database_name = "${DB_NAME}"
+          database_id = "${{ steps.d1.outputs.db_id }}"
+          EOF
+      - name: Inspect CRM data without modifying anything
+        shell: bash
+        run: |
+          set -euo pipefail
+          q(){ npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.recovery.toml --command "$1"; }
+          echo '=== CURRENT COUNTS ==='
+          q "SELECT COUNT(*) AS leads FROM leads"
+          q "SELECT COUNT(*) AS lead_activity FROM lead_activity"
+          q "SELECT COUNT(*) AS social_leads FROM social_leads"
+          q "SELECT COUNT(*) AS social_events FROM social_lead_events"
+          q "SELECT COUNT(*) AS sessions FROM telecaller_sessions"
+          echo '=== LEAD STATUS COUNTS ==='
+          q "SELECT status,COUNT(*) AS count FROM leads GROUP BY status ORDER BY count DESC"
+          echo '=== ACTIVITY TYPE COUNTS ==='
+          q "SELECT activity_type,COUNT(*) AS count FROM lead_activity GROUP BY activity_type ORDER BY count DESC"
+          echo '=== TELECALLER ACTIVITY COUNTS ==='
+          q "SELECT caller,COUNT(*) AS count FROM lead_activity WHERE caller IN ('Telecaller 1','Telecaller 2') GROUP BY caller ORDER BY caller"
+          echo '=== LATEST ACTIVITY DATES ==='
+          q "SELECT caller,MAX(created_at) AS latest,COUNT(*) AS total FROM lead_activity GROUP BY caller ORDER BY total DESC"
+          echo '=== REPLACEMENT BACKUPS ==='
+          q "SELECT id,source_file,old_lead_count,new_lead_count,new_activity_count,replaced_by,created_at FROM lead_replacement_backups ORDER BY id DESC LIMIT 10" || true
+          echo '=== DAILY IMPORT HISTORY ==='
+          q "SELECT id,import_date,source_file,total_rows,valid_rows,new_leads,repeat_callers,imported_by,created_at FROM daily_lead_imports ORDER BY id DESC LIMIT 20" || true
+          echo '=== SOCIAL LEAD STATUS ==='
+          q "SELECT status,COUNT(*) AS count FROM social_leads GROUP BY status ORDER BY count DESC" || true
+          echo '=== DONE: READ-ONLY DIAGNOSTIC ==='
