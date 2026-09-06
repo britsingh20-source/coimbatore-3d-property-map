@@ -69,7 +69,7 @@ async function forward(request,path,payload,env,ctx){
 }
 
 function whatsappLink(env,keyword,token){
-  const number=String(env.WHATSAPP_LEAD_NUMBER||'').replace(/\D/g,'');
+  const number=String(env.WHATSAPP_LEAD_NUMBER||'918148127587').replace(/\D/g,'');
   if(!number)return null;
   const message=`${keyword} property enquiry from Instagram. Ref: ${token}`;
   return `https://wa.me/${number}?text=${encodeURIComponent(message)}`;
