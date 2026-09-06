@@ -43,6 +43,18 @@ CREATE TABLE IF NOT EXISTS social_lead_events (
 
 CREATE INDEX IF NOT EXISTS idx_social_lead_events_social_lead ON social_lead_events(social_lead_id, created_at);
 
+-- Privacy-safe Meta webhook diagnostics. Stores only event category metadata,
+-- never usernames, phone numbers, comment text, message text, tokens, or payload bodies.
+CREATE TABLE IF NOT EXISTS meta_webhook_receipts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  object_type TEXT,
+  field_name TEXT,
+  received_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_meta_webhook_receipts_received ON meta_webhook_receipts(received_at);
+CREATE INDEX IF NOT EXISTS idx_meta_webhook_receipts_field ON meta_webhook_receipts(field_name, received_at);
+
 CREATE TABLE IF NOT EXISTS social_keyword_routes (
   keyword TEXT PRIMARY KEY,
   canonical_area TEXT NOT NULL,
