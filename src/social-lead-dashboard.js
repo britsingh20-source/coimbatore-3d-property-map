@@ -1,84 +1,38 @@
 const API_BASE=window.LEAD_API_BASE||'';
+let currentDate='';
+let currentStage='comments';
 
 function currentRole(){return window.CRM_SESSION?.role?.()||'';}
 function currentUser(){
   if(window.CRM_SESSION?.user)return window.CRM_SESSION.user()||'';
-  const raw=localStorage.getItem('crm-current-user');
-  if(!raw)return '';
+  const raw=localStorage.getItem('crm-current-user');if(!raw)return '';
   try{const v=JSON.parse(raw);return v?.user_label||v?.label||v||'';}catch{return raw;}
 }
-function allowed(){
-  return ['manager','administrator','director'].includes(currentRole()) ||
-    ['Manager 1','Manager 2','Administrator','Director'].includes(currentUser());
-}
-function istDate(offset=0){
-  const now=new Date();
-  const utc=now.getTime()+now.getTimezoneOffset()*60000;
-  const ist=new Date(utc+330*60000+offset*86400000);
-  return `${ist.getFullYear()}-${String(ist.getMonth()+1).padStart(2,'0')}-${String(ist.getDate()).padStart(2,'0')}`;
-}
+function token(){return window.CRM_SESSION?.token?.()||localStorage.getItem('crm-telecaller-session-token')||'';}
+function allowed(){return ['manager','administrator','director'].includes(currentRole())||['Manager 1','Manager 2','Administrator','Director'].includes(currentUser());}
+function istDate(offset=0){const now=new Date();const utc=now.getTime()+now.getTimezoneOffset()*60000;const ist=new Date(utc+330*60000+offset*86400000);return `${ist.getFullYear()}-${String(ist.getMonth()+1).padStart(2,'0')}-${String(ist.getDate()).padStart(2,'0')}`;}
 function esc(v=''){return String(v).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
 function ensureStyle(){
   if(document.querySelector('#social-dash-style'))return;
   const s=document.createElement('style');s.id='social-dash-style';s.textContent=`
-  .social-dash{margin:18px 0 22px;padding:18px;border:1px solid #dce7e2;border-radius:18px;background:#f8fbfa}
-  .social-dash-head{display:flex;gap:12px;align-items:end;justify-content:space-between;flex-wrap:wrap;margin-bottom:14px}
-  .social-dash-head small{font-weight:800;letter-spacing:.08em;color:#0b6b59}.social-dash-head h3{margin:3px 0 0;font-size:18px}
-  .social-date-tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.social-date-tools button,.social-date-tools input{border:1px solid #cbd9d3;background:#fff;border-radius:10px;padding:9px 11px;font-weight:700;color:#24453e}
-  .social-date-tools button.active{background:#0c6554;color:#fff;border-color:#0c6554}
-  .social-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.social-kpi{padding:14px;border-radius:14px;background:#fff;border:1px solid #e1ebe7}.social-kpi small{display:block;color:#64746f;font-size:11px;font-weight:800;text-transform:uppercase}.social-kpi b{display:block;font-size:25px;margin-top:5px;color:#123f37}.social-kpi span{display:block;margin-top:3px;font-size:11px;color:#7b8985}
-  .social-area-title{margin:16px 0 8px;font-size:13px;font-weight:900;color:#35574f}.social-area-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.social-area{background:#fff;border:1px solid #e1ebe7;border-radius:12px;padding:11px}.social-area b{display:block;font-size:14px}.social-area small{display:block;margin-top:4px;color:#6b7d77;font-size:11px}.social-empty{padding:13px;background:#fff;border-radius:12px;color:#6b7d77;font-size:13px}.social-error{color:#9b2c2c;background:#fff1f1;padding:11px;border-radius:12px;font-size:13px}
-  @media(max-width:760px){.social-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.social-area-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+  .social-dash{margin:18px 0 22px;padding:18px;border:1px solid #dce7e2;border-radius:18px;background:#f8fbfa}.social-dash-head{display:flex;gap:12px;align-items:end;justify-content:space-between;flex-wrap:wrap;margin-bottom:14px}.social-dash-head small{font-weight:800;letter-spacing:.08em;color:#0b6b59}.social-dash-head h3{margin:3px 0 0;font-size:18px}.social-date-tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.social-date-tools button,.social-date-tools input{border:1px solid #cbd9d3;background:#fff;border-radius:10px;padding:9px 11px;font-weight:700;color:#24453e}.social-date-tools button.active{background:#0c6554;color:#fff;border-color:#0c6554}.social-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.social-kpi{padding:14px;border-radius:14px;background:#fff;border:1px solid #e1ebe7;text-align:left;cursor:pointer}.social-kpi.active{outline:2px solid #0c6554}.social-kpi small{display:block;color:#64746f;font-size:11px;font-weight:800;text-transform:uppercase}.social-kpi b{display:block;font-size:25px;margin-top:5px;color:#123f37}.social-kpi span{display:block;margin-top:3px;font-size:11px;color:#7b8985}.social-area-title{margin:16px 0 8px;font-size:13px;font-weight:900;color:#35574f}.social-area-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.social-area{background:#fff;border:1px solid #e1ebe7;border-radius:12px;padding:11px;text-align:left;cursor:pointer}.social-area b{display:block;font-size:14px}.social-area small{display:block;margin-top:4px;color:#6b7d77;font-size:11px}.social-empty{padding:13px;background:#fff;border-radius:12px;color:#6b7d77;font-size:13px}.social-error{color:#9b2c2c;background:#fff1f1;padding:11px;border-radius:12px;font-size:13px}.social-detail{margin-top:14px;border-top:1px solid #dbe6e2;padding-top:12px}.social-detail-head{display:flex;justify-content:space-between;gap:10px;align-items:center}.social-detail-head h4{margin:0}.social-detail-table{width:100%;border-collapse:collapse;margin-top:10px;font-size:12px}.social-detail-table th,.social-detail-table td{padding:8px;border-bottom:1px solid #e6eeeb;text-align:left}.social-detail-table a{font-weight:800;color:#0c6554;text-decoration:none}@media(max-width:760px){.social-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.social-area-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.social-detail{overflow:auto}.social-detail-table{min-width:720px}}
   `;document.head.appendChild(s);
 }
-async function getSummary(date){
-  if(!API_BASE)throw new Error('CRM API not configured');
-  const r=await fetch(`${API_BASE}/api/social/summary?date=${encodeURIComponent(date)}`,{headers:{'accept':'application/json'}});
-  if(!r.ok)throw new Error(await r.text());
-  return r.json();
+async function getSummary(date){if(!API_BASE)throw new Error('CRM API not configured');const r=await fetch(`${API_BASE}/api/social/summary?date=${encodeURIComponent(date)}`,{headers:{accept:'application/json'}});if(!r.ok)throw new Error(await r.text());return r.json();}
+async function getDetails(date,stage,area=''){const q=new URLSearchParams({date,stage});if(area)q.set('area',area);const r=await fetch(`${API_BASE}/api/social/leads?${q}`,{headers:{accept:'application/json',...(token()?{Authorization:`Bearer ${token()}`}:{})}});if(!r.ok)throw new Error(await r.text());return r.json();}
+function phoneLink(phone){const digits=String(phone||'').replace(/\D/g,'');return phone?`<a href="tel:${digits}">${esc(phone)}</a>`:'—';}
+async function drill(stage,area=''){
+  currentStage=stage;document.querySelectorAll('.social-kpi').forEach(b=>b.classList.toggle('active',b.dataset.socialStage===stage));
+  const box=document.querySelector('#social-dash-detail');if(!box)return;box.innerHTML='<div class="social-empty">Loading matching enquiries…</div>';
+  try{const data=await getDetails(currentDate,stage,area);const rows=data.leads||[];const title=area?`${area} — ${stage}`:`${stage==='comments'?'AREA comments':stage==='selected'?'Area selected':'CRM leads captured'}`;box.innerHTML=`<div class="social-detail"><div class="social-detail-head"><h4>${esc(title)} (${rows.length})</h4></div>${rows.length?`<table class="social-detail-table"><thead><tr><th>Instagram</th><th>Phone</th><th>Area</th><th>CRM name</th><th>Status</th><th>Assigned</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.platform_username||'—')}</td><td>${phoneLink(r.phone)}</td><td>${esc(r.interested_area||'Not selected')}</td><td>${esc(r.name||'—')}</td><td>${esc(r.crm_status||r.status||'—')}</td><td>${esc(r.assigned_to||'—')}</td></tr>`).join('')}</tbody></table>`:`<div class="social-empty">No matching enquiries for this date.</div>`}</div>`;}catch(e){box.innerHTML=`<div class="social-error">Could not load enquiry details: ${esc(e.message)}</div>`;}
 }
 function render(data){
-  const body=document.querySelector('#social-dash-body');if(!body)return;
-  const m=data?.metrics||{};
-  const areas=(data?.by_area||[]).filter(x=>x.area&&x.area!=='Not selected');
-  body.innerHTML=`<div class="social-kpis">
-    <div class="social-kpi"><small>AREA comments</small><b>${Number(m.area_comments||0)}</b><span>Instagram enquiries</span></div>
-    <div class="social-kpi"><small>Area selected</small><b>${Number(m.area_selected||0)}</b><span>Locality chosen</span></div>
-    <div class="social-kpi"><small>WhatsApp opened</small><b>${Number(m.whatsapp_opened||0)}</b><span>Area button taps</span></div>
-    <div class="social-kpi"><small>CRM leads captured</small><b>${Number(m.crm_leads_captured||0)}</b><span>Phone number captured</span></div>
-  </div>
-  <div class="social-area-title">AREA-WISE CAPTURE</div>
-  ${areas.length?`<div class="social-area-grid">${areas.map(a=>`<div class="social-area"><b>${esc(a.area)}</b><small>${Number(a.selected||0)} selected · ${Number(a.captured||0)} captured</small></div>`).join('')}</div>`:`<div class="social-empty">No area selections for this date yet.</div>`}`;
+  const body=document.querySelector('#social-dash-body');if(!body)return;const m=data?.metrics||{};const areas=(data?.by_area||[]).filter(x=>x.area&&x.area!=='Not selected');
+  body.innerHTML=`<div class="social-kpis"><button class="social-kpi" data-social-stage="comments"><small>AREA comments</small><b>${Number(m.area_comments||0)}</b><span>Tap to show enquiries</span></button><button class="social-kpi" data-social-stage="selected"><small>Area selected</small><b>${Number(m.area_selected||0)}</b><span>Tap to show selections</span></button><button class="social-kpi" data-social-stage="selected"><small>WhatsApp opened</small><b>${Number(m.whatsapp_opened||0)}</b><span>Area button taps</span></button><button class="social-kpi" data-social-stage="captured"><small>CRM leads captured</small><b>${Number(m.crm_leads_captured||0)}</b><span>Tap to show phone numbers</span></button></div><div class="social-area-title">AREA-WISE CAPTURE — TAP AN AREA</div>${areas.length?`<div class="social-area-grid">${areas.map(a=>`<button class="social-area" data-social-area="${esc(a.area)}"><b>${esc(a.area)}</b><small>${Number(a.selected||0)} selected · ${Number(a.captured||0)} captured</small></button>`).join('')}</div>`:`<div class="social-empty">No area selections for this date yet.</div>`}<div id="social-dash-detail"></div>`;
+  document.querySelectorAll('[data-social-stage]').forEach(b=>b.onclick=()=>drill(b.dataset.socialStage));
+  document.querySelectorAll('[data-social-area]').forEach(b=>b.onclick=()=>drill('selected',b.dataset.socialArea));
 }
-async function load(date){
-  const body=document.querySelector('#social-dash-body');if(!body)return;
-  body.innerHTML='<div class="social-empty">Loading social leads…</div>';
-  try{render(await getSummary(date));}catch(e){body.innerHTML=`<div class="social-error">Could not load social lead count: ${esc(e.message)}</div>`;}
-}
-function selectDate(date,kind='custom'){
-  const input=document.querySelector('#social-date');if(input)input.value=date;
-  document.querySelectorAll('[data-social-range]').forEach(b=>b.classList.toggle('active',b.dataset.socialRange===kind));
-  load(date);
-}
-function mount(){
-  if(!allowed())return;
-  const leads=document.querySelector('#admin-leads');if(!leads){setTimeout(mount,100);return;}
-  if(document.querySelector('#social-lead-dashboard'))return;
-  ensureStyle();
-  const anchor=leads.querySelector('#crm-team-flow')||leads.querySelector('.crm-head');
-  if(!anchor)return;
-  anchor.insertAdjacentHTML('afterend',`<section id="social-lead-dashboard" class="social-dash">
-    <div class="social-dash-head"><div><small>SOCIAL LEADS</small><h3>Instagram → WhatsApp Today</h3></div><div class="social-date-tools"><button data-social-range="today" class="active">Today</button><button data-social-range="yesterday">Yesterday</button><input id="social-date" type="date" value="${istDate(0)}"></div></div>
-    <div id="social-dash-body"></div>
-  </section>`);
-  document.querySelector('[data-social-range="today"]').onclick=()=>selectDate(istDate(0),'today');
-  document.querySelector('[data-social-range="yesterday"]').onclick=()=>selectDate(istDate(-1),'yesterday');
-  document.querySelector('#social-date').onchange=e=>selectDate(e.target.value,'custom');
-  load(istDate(0));
-}
-
-window.addEventListener('crm-session-login',()=>setTimeout(mount,100));
-window.addEventListener('crm-admin-open',()=>setTimeout(mount,100));
-window.addEventListener('crm-user-changed',()=>setTimeout(mount,100));
-window.addEventListener('crm-modules-ready',()=>setTimeout(mount,100));
-setTimeout(mount,800);
+async function load(date){currentDate=date;const body=document.querySelector('#social-dash-body');if(!body)return;body.innerHTML='<div class="social-empty">Loading social leads…</div>';try{render(await getSummary(date));}catch(e){body.innerHTML=`<div class="social-error">Could not load social lead count: ${esc(e.message)}</div>`;}}
+function selectDate(date,kind='custom'){const input=document.querySelector('#social-date');if(input)input.value=date;document.querySelectorAll('[data-social-range]').forEach(b=>b.classList.toggle('active',b.dataset.socialRange===kind));load(date);}
+function mount(){if(!allowed())return;const leads=document.querySelector('#admin-leads');if(!leads){setTimeout(mount,100);return;}if(document.querySelector('#social-lead-dashboard'))return;ensureStyle();const anchor=leads.querySelector('#crm-team-flow')||leads.querySelector('.crm-head');if(!anchor)return;currentDate=istDate(0);anchor.insertAdjacentHTML('afterend',`<section id="social-lead-dashboard" class="social-dash"><div class="social-dash-head"><div><small>SOCIAL LEADS</small><h3>Instagram → WhatsApp Today</h3></div><div class="social-date-tools"><button data-social-range="today" class="active">Today</button><button data-social-range="yesterday">Yesterday</button><input id="social-date" type="date" value="${currentDate}"></div></div><div id="social-dash-body"></div></section>`);document.querySelector('[data-social-range="today"]').onclick=()=>selectDate(istDate(0),'today');document.querySelector('[data-social-range="yesterday"]').onclick=()=>selectDate(istDate(-1),'yesterday');document.querySelector('#social-date').onchange=e=>selectDate(e.target.value,'custom');load(currentDate);}
+window.addEventListener('crm-session-login',()=>setTimeout(mount,100));window.addEventListener('crm-admin-open',()=>setTimeout(mount,100));window.addEventListener('crm-user-changed',()=>setTimeout(mount,100));window.addEventListener('crm-modules-ready',()=>setTimeout(mount,100));setTimeout(mount,800);
