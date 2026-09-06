@@ -1,5 +1,5 @@
 import baseWorker from './main-whatsapp-capture.js';
-import { detectSocialKeyword } from './social-keywords.js';
+import { detectSocialKeyword, AREA_OPTIONS, areaByPayload } from './social-keywords.js';
 
 const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store'}});
 
@@ -58,12 +58,13 @@ function instagramEvents(payload){
       const v=change.value||{},text=String(v.text||'');
       const match=detectSocialKeyword(text);if(!match)continue;
       const username=String(v.from?.username||'');
-      out.push({professional_account_id:professionalAccountId,platform_user_id:String(v.from?.id||username||v.id||''),username,source_type:'comment',media_id:String(v.media?.id||v.media_id||''),comment_id:String(v.id||''),text});
+      out.push({professional_account_id:professionalAccountId,platform_user_id:String(v.from?.id||username||v.id||''),username,source_type:'comment',media_id:String(v.media?.id||v.media_id||''),comment_id:String(v.id||''),text,quick_reply_payload:''});
     }
     for(const msg of entry.messaging||[]){
       const text=String(msg.message?.text||'').trim();
-      if(!text)continue;
-      out.push({professional_account_id:professionalAccountId,platform_user_id:String(msg.sender?.id||''),username:'',source_type:'dm',media_id:'',comment_id:'',text});
+      const quickReplyPayload=String(msg.message?.quick_reply?.payload||'').trim();
+      if(!text&&!quickReplyPayload)continue;
+      out.push({professional_account_id:professionalAccountId,platform_user_id:String(msg.sender?.id||''),username:'',source_type:'dm',media_id:'',comment_id:'',text,quick_reply_payload:quickReplyPayload});
     }
   }
   return out.filter(x=>x.platform_user_id);
@@ -102,9 +103,10 @@ async function logSocialEvent(env,socialLeadId,eventType,payload){
   await env.DB.prepare('INSERT INTO social_lead_events(social_lead_id,event_type,event_payload) VALUES(?,?,?)').bind(socialLeadId,eventType,JSON.stringify(payload||{})).run();
 }
 
-async function replyAlreadySent(env,socialLeadId){
-  if(!socialLeadId)return false;
-  const row=await env.DB.prepare("SELECT 1 AS sent FROM social_lead_events WHERE social_lead_id=? AND event_type='instagram_private_reply_sent' LIMIT 1").bind(socialLeadId).first();
+async function commentReplyAlreadySent(env,socialLeadId,commentId){
+  if(!socialLeadId||!commentId)return false;
+  const needle=`%${String(commentId).replace(/[%_]/g,'')}%`;
+  const row=await env.DB.prepare("SELECT 1 AS sent FROM social_lead_events WHERE social_lead_id=? AND event_type IN ('instagram_private_reply_sent','instagram_area_menu_sent') AND COALESCE(event_payload,'') LIKE ? LIMIT 1").bind(socialLeadId,needle).first();
   return !!row;
 }
 
@@ -113,24 +115,90 @@ function instagramEndpoint(env,professionalAccountId){
   return `https://graph.instagram.com/${prefix}${encodeURIComponent(professionalAccountId)}/messages`;
 }
 
-async function sendInstagramPrivateReply(env,event,intake){
+async function postInstagramMessage(env,professionalAccountId,payload){
+  const response=await fetch(instagramEndpoint(env,professionalAccountId),{method:'POST',headers:{'content-type':'application/json','authorization':`Bearer ${env.INSTAGRAM_ACCESS_TOKEN}`},body:JSON.stringify(payload)});
+  const body=await response.json().catch(()=>({}));
+  return {ok:response.ok,status:response.status,body};
+}
+
+function areaQuickReplies(){
+  return AREA_OPTIONS.slice(0,13).map(([keyword,area])=>({content_type:'text',title:area,payload:`AREA:${keyword}`}));
+}
+
+async function sendInstagramAreaMenu(env,event,intake){
   if(event.source_type!=='comment'||!event.comment_id||!event.professional_account_id)return {sent:false,reason:'Not a comment event'};
   if(!env.INSTAGRAM_ACCESS_TOKEN)return {sent:false,reason:'Instagram access token unavailable'};
-  if(await replyAlreadySent(env,intake.social_lead_id))return {sent:false,skipped:true,reason:'Reply already sent'};
+  if(await commentReplyAlreadySent(env,intake.social_lead_id,event.comment_id))return {sent:false,skipped:true,reason:'This comment was already answered'};
+  const payload={recipient:{comment_id:event.comment_id},message:{text:'Choose the area you are looking for:',quick_replies:areaQuickReplies()}};
+  const result=await postInstagramMessage(env,event.professional_account_id,payload);
+  if(!result.ok){
+    await logSocialEvent(env,intake.social_lead_id,'instagram_area_menu_failed',{status:result.status,error:result.body?.error?.message||'Instagram API error',comment_id:event.comment_id});
+    return {sent:false,status:result.status,error:result.body?.error?.message||'Instagram API error'};
+  }
+  await env.DB.prepare("UPDATE social_leads SET status='Area Selection Pending',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(intake.social_lead_id).run();
+  await logSocialEvent(env,intake.social_lead_id,'instagram_area_menu_sent',{message_id:result.body.message_id||null,comment_id:event.comment_id});
+  return {sent:true,message_id:result.body.message_id||null};
+}
+
+async function sendInstagramPrivateReply(env,event,intake){
+  if(intake.keyword==='AREA')return sendInstagramAreaMenu(env,event,intake);
+  if(event.source_type!=='comment'||!event.comment_id||!event.professional_account_id)return {sent:false,reason:'Not a comment event'};
+  if(!env.INSTAGRAM_ACCESS_TOKEN)return {sent:false,reason:'Instagram access token unavailable'};
+  if(await commentReplyAlreadySent(env,intake.social_lead_id,event.comment_id))return {sent:false,skipped:true,reason:'This comment was already answered'};
   const text=`Thanks for your interest in ${intake.area} properties. Reply WHATSAPP to this message and we will send you a tappable WhatsApp button.`;
-  const response=await fetch(instagramEndpoint(env,event.professional_account_id),{method:'POST',headers:{'content-type':'application/json','authorization':`Bearer ${env.INSTAGRAM_ACCESS_TOKEN}`},body:JSON.stringify({recipient:{comment_id:event.comment_id},message:{text}})});
-  const body=await response.json().catch(()=>({}));
-  if(!response.ok){
-    await logSocialEvent(env,intake.social_lead_id,'instagram_private_reply_failed',{status:response.status,error:body?.error?.message||'Instagram API error'});
-    return {sent:false,status:response.status,error:body?.error?.message||'Instagram API error'};
+  const result=await postInstagramMessage(env,event.professional_account_id,{recipient:{comment_id:event.comment_id},message:{text}});
+  if(!result.ok){
+    await logSocialEvent(env,intake.social_lead_id,'instagram_private_reply_failed',{status:result.status,error:result.body?.error?.message||'Instagram API error',comment_id:event.comment_id});
+    return {sent:false,status:result.status,error:result.body?.error?.message||'Instagram API error'};
   }
   await env.DB.prepare("UPDATE social_leads SET status='Instagram Reply Requested',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(intake.social_lead_id).run();
-  await logSocialEvent(env,intake.social_lead_id,'instagram_private_reply_sent',{message_id:body.message_id||null,recipient_id:body.recipient_id||null});
-  return {sent:true,message_id:body.message_id||null};
+  await logSocialEvent(env,intake.social_lead_id,'instagram_private_reply_sent',{message_id:result.body.message_id||null,comment_id:event.comment_id});
+  return {sent:true,message_id:result.body.message_id||null};
 }
 
 async function latestInstagramLead(env,platformUserId){
-  return env.DB.prepare(`SELECT id AS social_lead_id,keyword,interested_area AS area,whatsapp_prefill_token,status FROM social_leads WHERE platform='instagram' AND platform_user_id=? ORDER BY id DESC LIMIT 1`).bind(platformUserId).first();
+  return env.DB.prepare(`SELECT id AS social_lead_id,keyword,interested_area AS area,whatsapp_prefill_token,status,assigned_to FROM social_leads WHERE platform='instagram' AND platform_user_id=? ORDER BY id DESC LIMIT 1`).bind(platformUserId).first();
+}
+
+async function sendPhoneNumberRequest(env,event,intake){
+  const payload={recipient:{id:event.platform_user_id},message:{text:`Great. You selected ${intake.area}. Tap your phone number below so we can send matching properties and save your enquiry.`,quick_replies:[{content_type:'user_phone_number'}]}};
+  const result=await postInstagramMessage(env,event.professional_account_id,payload);
+  if(!result.ok){
+    await logSocialEvent(env,intake.social_lead_id,'instagram_phone_request_failed',{status:result.status,error:result.body?.error?.message||'Instagram API error'});
+    return {sent:false,status:result.status,error:result.body?.error?.message||'Instagram API error'};
+  }
+  await env.DB.prepare("UPDATE social_leads SET status='Phone Requested',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(intake.social_lead_id).run();
+  await logSocialEvent(env,intake.social_lead_id,'instagram_phone_requested',{message_id:result.body.message_id||null});
+  return {sent:true,message_id:result.body.message_id||null};
+}
+
+async function applyAreaSelection(env,event,intake,selection){
+  await env.DB.prepare("UPDATE social_leads SET interested_area=?,assigned_to=?,status='Area Selected',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(selection.area,selection.assignedTo||null,intake.social_lead_id).run();
+  await logSocialEvent(env,intake.social_lead_id,'instagram_area_selected',{area:selection.area,keyword:selection.keyword});
+  const updated={...intake,area:selection.area,assigned_to:selection.assignedTo||null};
+  return sendPhoneNumberRequest(env,event,updated);
+}
+
+function phoneFromInstagramEvent(event){
+  const candidates=[event.quick_reply_payload,event.text];
+  for(const value of candidates){
+    const digits=String(value||'').replace(/\D/g,'');
+    if(digits.length===10)return digits;
+    if(digits.length===12&&digits.startsWith('91'))return digits.slice(2);
+  }
+  return null;
+}
+
+async function captureInstagramPhone(request,event,env,ctx,intake,phone){
+  const response=await forward(request,'/api/social/whatsapp/inbound',{phone,name:'',prefill_token:intake.whatsapp_prefill_token},env,ctx);
+  const body=await response.json().catch(()=>null);
+  if(!response.ok||!body?.ok){
+    await logSocialEvent(env,intake.social_lead_id,'instagram_phone_capture_failed',{status:response.status});
+    return {sent:false,status:response.status,error:'Unable to merge phone into CRM'};
+  }
+  await logSocialEvent(env,intake.social_lead_id,'instagram_phone_captured',{lead_id:body.lead_id});
+  const result=await postInstagramMessage(env,event.professional_account_id,{recipient:{id:event.platform_user_id},message:{text:`Thank you. Your ${body.area||intake.area||'property'} enquiry is registered. Our team can now follow up with you.`}});
+  return {sent:result.ok,captured:true,lead_id:body.lead_id};
 }
 
 async function sendInstagramWhatsAppButton(env,event,intake){
@@ -138,19 +206,15 @@ async function sendInstagramWhatsAppButton(env,event,intake){
   if(!env.INSTAGRAM_ACCESS_TOKEN)return {sent:false,reason:'Instagram access token unavailable'};
   const link=whatsappLink(env,intake.keyword,intake.whatsapp_prefill_token);
   if(!link)return {sent:false,reason:'WhatsApp lead number unavailable'};
-  const payload={
-    recipient:{id:event.platform_user_id},
-    message:{attachment:{type:'template',payload:{template_type:'button',text:`Continue your ${intake.area} property enquiry on WhatsApp.`,buttons:[{type:'web_url',url:link,title:'Open WhatsApp'}]}}}
-  };
-  const response=await fetch(instagramEndpoint(env,event.professional_account_id),{method:'POST',headers:{'content-type':'application/json','authorization':`Bearer ${env.INSTAGRAM_ACCESS_TOKEN}`},body:JSON.stringify(payload)});
-  const body=await response.json().catch(()=>({}));
-  if(!response.ok){
-    await logSocialEvent(env,intake.social_lead_id,'instagram_whatsapp_button_failed',{status:response.status,error:body?.error?.message||'Instagram API error'});
-    return {sent:false,status:response.status,error:body?.error?.message||'Instagram API error'};
+  const payload={recipient:{id:event.platform_user_id},message:{attachment:{type:'template',payload:{template_type:'button',text:`Continue your ${intake.area||'property'} enquiry on WhatsApp.`,buttons:[{type:'web_url',url:link,title:'Open WhatsApp'}]}}}};
+  const result=await postInstagramMessage(env,event.professional_account_id,payload);
+  if(!result.ok){
+    await logSocialEvent(env,intake.social_lead_id,'instagram_whatsapp_button_failed',{status:result.status,error:result.body?.error?.message||'Instagram API error'});
+    return {sent:false,status:result.status,error:result.body?.error?.message||'Instagram API error'};
   }
   await env.DB.prepare("UPDATE social_leads SET status='WhatsApp Link Sent',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(intake.social_lead_id).run();
-  await logSocialEvent(env,intake.social_lead_id,'instagram_whatsapp_button_sent',{message_id:body.message_id||null,recipient_id:body.recipient_id||null});
-  return {sent:true,message_id:body.message_id||null};
+  await logSocialEvent(env,intake.social_lead_id,'instagram_whatsapp_button_sent',{message_id:result.body.message_id||null});
+  return {sent:true,message_id:result.body.message_id||null};
 }
 
 async function processInstagramEvent(request,event,env,ctx){
@@ -165,6 +229,18 @@ async function processInstagramEvent(request,event,env,ctx){
 
   if(event.source_type==='dm'){
     let intake=await latestInstagramLead(env,event.platform_user_id);
+    const selection=areaByPayload(event.quick_reply_payload||'');
+    if(selection&&intake){
+      const reply=await applyAreaSelection(env,event,intake,selection);
+      return {processed:true,intake,reply};
+    }
+
+    const phone=phoneFromInstagramEvent(event);
+    if(phone&&intake&&String(intake.status||'').toLowerCase().includes('phone')){
+      const reply=await captureInstagramPhone(request,event,env,ctx,intake,phone);
+      return {processed:true,intake,reply};
+    }
+
     const keywordMatch=detectSocialKeyword(event.text||'');
     const wantsWhatsApp=/\bWHATSAPP\b/i.test(event.text||'');
     if(!intake&&keywordMatch){
@@ -172,6 +248,11 @@ async function processInstagramEvent(request,event,env,ctx){
       if(r.ok)intake=await r.json().catch(()=>null);
     }
     if(!intake)return {processed:false,ignored:true};
+    if(keywordMatch?.keyword==='AREA'){
+      const payload={recipient:{id:event.platform_user_id},message:{text:'Choose the area you are looking for:',quick_replies:areaQuickReplies()}};
+      const result=await postInstagramMessage(env,event.professional_account_id,payload);
+      return {processed:true,intake,reply:{sent:result.ok,status:result.status}};
+    }
     if(!wantsWhatsApp&&!keywordMatch)return {processed:false,ignored:true};
     const reply=await sendInstagramWhatsAppButton(env,event,intake);
     return {processed:true,intake,reply};
@@ -212,7 +293,7 @@ async function pollInstagramComments(env,ctx){
       const platformUserId=String(comment?.from?.id||username||comment?.id||'');
       if(!platformUserId||platformUserId===accountId)continue;
       matched++;
-      const event={professional_account_id:accountId,platform_user_id:platformUserId,username,source_type:'comment',media_id:String(media?.id||''),comment_id:String(comment?.id||''),text};
+      const event={professional_account_id:accountId,platform_user_id:platformUserId,username,source_type:'comment',media_id:String(media?.id||''),comment_id:String(comment?.id||''),text,quick_reply_payload:''};
       try{
         const result=await processInstagramEvent(syntheticRequest,event,env,ctx);
         if(!result.processed)continue;
