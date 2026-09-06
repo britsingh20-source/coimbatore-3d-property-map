@@ -14,11 +14,20 @@ async function intakeInstagram(env,body){
   const platformUserId=String(body.platform_user_id||'').trim();
   if(!platformUserId)return {error:'platform_user_id required',status:422};
   const mediaId=String(body.media_id||'').trim()||null;
-  const existing=await env.DB.prepare(`SELECT id,whatsapp_prefill_token,assigned_to FROM social_leads WHERE platform='instagram' AND platform_user_id=? AND COALESCE(source_media_id,'')=COALESCE(?, '') AND keyword=? ORDER BY id DESC LIMIT 1`).bind(platformUserId,mediaId,match.keyword).first();
+  const sourceType=String(body.source_type||'comment');
+  const commentId=String(body.comment_id||'').trim()||null;
+
+  let existing=null;
+  if(sourceType==='comment'&&commentId){
+    existing=await env.DB.prepare(`SELECT id,whatsapp_prefill_token,assigned_to FROM social_leads WHERE platform='instagram' AND source_comment_id=? ORDER BY id DESC LIMIT 1`).bind(commentId).first();
+  }else{
+    existing=await env.DB.prepare(`SELECT id,whatsapp_prefill_token,assigned_to FROM social_leads WHERE platform='instagram' AND platform_user_id=? AND COALESCE(source_media_id,'')=COALESCE(?, '') AND keyword=? ORDER BY id DESC LIMIT 1`).bind(platformUserId,mediaId,match.keyword).first();
+  }
   if(existing)return {ok:true,created:false,social_lead_id:existing.id,keyword:match.keyword,area:match.area,assigned_to:existing.assigned_to||match.assignedTo,whatsapp_prefill_token:existing.whatsapp_prefill_token};
+
   const token=makeToken();
-  const row=await env.DB.prepare(`INSERT INTO social_leads(platform,platform_user_id,platform_username,source_type,source_media_id,source_comment_id,keyword,interested_area,original_text,whatsapp_prefill_token,assigned_to,status) VALUES('instagram',?,?,?,?,?,?,?,?,?,?,'WhatsApp Pending') RETURNING id`).bind(platformUserId,String(body.username||'')||null,String(body.source_type||'comment'),mediaId,String(body.comment_id||'')||null,match.keyword,match.area,String(body.text||'')||null,token,match.assignedTo||null).first();
-  await env.DB.prepare("INSERT INTO social_lead_events(social_lead_id,event_type,event_payload) VALUES(?,?,?)").bind(row.id,'instagram_keyword_detected',JSON.stringify({source_type:body.source_type||'comment',media_id:mediaId,comment_id:body.comment_id||null,keyword:match.keyword})).run();
+  const row=await env.DB.prepare(`INSERT INTO social_leads(platform,platform_user_id,platform_username,source_type,source_media_id,source_comment_id,keyword,interested_area,original_text,whatsapp_prefill_token,assigned_to,status) VALUES('instagram',?,?,?,?,?,?,?,?,?,?,'WhatsApp Pending') RETURNING id`).bind(platformUserId,String(body.username||'')||null,sourceType,mediaId,commentId,match.keyword,match.area,String(body.text||'')||null,token,match.assignedTo||null).first();
+  await env.DB.prepare("INSERT INTO social_lead_events(social_lead_id,event_type,event_payload) VALUES(?,?,?)").bind(row.id,'instagram_keyword_detected',JSON.stringify({source_type:sourceType,media_id:mediaId,comment_id:commentId,keyword:match.keyword})).run();
   return {ok:true,created:true,social_lead_id:row.id,keyword:match.keyword,area:match.area,assigned_to:match.assignedTo,whatsapp_prefill_token:token};
 }
 
