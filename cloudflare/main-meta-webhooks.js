@@ -106,9 +106,16 @@ async function logSocialEvent(env,socialLeadId,eventType,payload){
     .bind(socialLeadId,eventType,JSON.stringify(payload||{})).run();
 }
 
+async function replyAlreadySent(env,socialLeadId){
+  if(!socialLeadId)return false;
+  const row=await env.DB.prepare("SELECT 1 AS sent FROM social_lead_events WHERE social_lead_id=? AND event_type='instagram_private_reply_sent' LIMIT 1").bind(socialLeadId).first();
+  return !!row;
+}
+
 async function sendInstagramPrivateReply(env,event,intake){
   if(event.source_type!=='comment'||!event.comment_id||!event.professional_account_id)return {sent:false,reason:'Not a comment event'};
   if(!env.INSTAGRAM_ACCESS_TOKEN)return {sent:false,reason:'Instagram access token unavailable'};
+  if(await replyAlreadySent(env,intake.social_lead_id))return {sent:false,skipped:true,reason:'Reply already sent'};
   const link=whatsappLink(env,intake.keyword,intake.whatsapp_prefill_token);
   if(!link)return {sent:false,reason:'WhatsApp lead number unavailable'};
   const text=`Thanks for your interest in ${intake.area} properties. Tap this WhatsApp link to receive matching properties privately: ${link}`;
@@ -125,32 +132,95 @@ async function sendInstagramPrivateReply(env,event,intake){
   return {sent:true,message_id:body.message_id||null};
 }
 
-export default {async fetch(request,env,ctx){
-  const url=new URL(request.url),path=url.pathname.replace(/\/$/,'')||'/';
-  if(request.method==='GET'&&path==='/webhooks/meta'){
-    if(url.searchParams.get('hub.mode')!=='subscribe'||url.searchParams.get('hub.verify_token')!==env.META_WEBHOOK_VERIFY_TOKEN)return new Response('Forbidden',{status:403});
-    return new Response(url.searchParams.get('hub.challenge')||'',{status:200});
-  }
-  if(request.method==='POST'&&path==='/webhooks/meta'){
-    const checked=await verifiedBody(request,env);if(checked.error)return json({error:checked.error},checked.status);
-    const payload=checked.body;
-    try{await recordWebhookReceipt(env,payload)}catch(e){console.log('webhook receipt diagnostic failed',e?.message||e)}
-    let processed=0,ignored=0,repliesSent=0,replyFailures=0;
-    if(payload.object==='instagram'){
-      const events=instagramEvents(payload);
-      for(const event of events){
-        const r=await forward(request,'/api/social/instagram/intake',event,env,ctx);
-        if(!r.ok){ignored++;continue;}
-        const intake=await r.json().catch(()=>null);
-        if(!intake?.ok){ignored++;continue;}
+async function processInstagramEvent(request,event,env,ctx){
+  const r=await forward(request,'/api/social/instagram/intake',event,env,ctx);
+  if(!r.ok)return {processed:false,ignored:true};
+  const intake=await r.json().catch(()=>null);
+  if(!intake?.ok)return {processed:false,ignored:true};
+  const reply=await sendInstagramPrivateReply(env,event,intake);
+  return {processed:true,intake,reply};
+}
+
+async function pollInstagramComments(env,ctx){
+  if(!env.INSTAGRAM_ACCESS_TOKEN||!env.DB)return {ok:false,reason:'Instagram polling unavailable'};
+  const meUrl=new URL('https://graph.instagram.com/me');
+  meUrl.searchParams.set('fields','id,user_id,account_type');
+  meUrl.searchParams.set('access_token',env.INSTAGRAM_ACCESS_TOKEN);
+  const meRes=await fetch(meUrl);
+  const me=await meRes.json().catch(()=>({}));
+  if(!meRes.ok)return {ok:false,reason:'Unable to resolve Instagram account'};
+  const accountId=String(me.user_id||me.id||'');
+  if(!accountId)return {ok:false,reason:'Instagram account id unavailable'};
+
+  const mediaUrl=new URL(`https://graph.instagram.com/v26.0/${encodeURIComponent(accountId)}/media`);
+  mediaUrl.searchParams.set('fields','id,timestamp,comments.limit(100){id,text,timestamp,from}');
+  mediaUrl.searchParams.set('limit','25');
+  mediaUrl.searchParams.set('access_token',env.INSTAGRAM_ACCESS_TOKEN);
+  const mediaRes=await fetch(mediaUrl);
+  const mediaBody=await mediaRes.json().catch(()=>({}));
+  if(!mediaRes.ok)return {ok:false,reason:'Unable to read Instagram comments'};
+
+  const cutoff=Date.now()-15*60*1000;
+  let matched=0,processed=0,repliesSent=0,replyFailures=0;
+  const syntheticRequest=new Request('https://coimbatore-lead-crm-api.internal/poll');
+  for(const media of mediaBody.data||[]){
+    for(const comment of media?.comments?.data||[]){
+      const ts=Date.parse(comment?.timestamp||'');
+      if(!Number.isFinite(ts)||ts<cutoff)continue;
+      const text=String(comment?.text||'');
+      if(!detectSocialKeyword(text))continue;
+      const username=String(comment?.from?.username||'');
+      const platformUserId=String(comment?.from?.id||username||comment?.id||'');
+      if(!platformUserId||platformUserId===accountId)continue;
+      matched++;
+      const event={professional_account_id:accountId,platform_user_id:platformUserId,username,source_type:'comment',media_id:String(media?.id||''),comment_id:String(comment?.id||''),text};
+      try{
+        const result=await processInstagramEvent(syntheticRequest,event,env,ctx);
+        if(!result.processed)continue;
         processed++;
-        const reply=await sendInstagramPrivateReply(env,event,intake);
-        if(reply.sent)repliesSent++;else if(event.source_type==='comment')replyFailures++;
+        if(result.reply?.sent)repliesSent++;
+        else if(!result.reply?.skipped)replyFailures++;
+      }catch(e){
+        replyFailures++;
+        console.log('Instagram polling event failed',e?.message||e);
       }
-    }else if(payload.object==='whatsapp_business_account'){
-      const events=whatsappEvents(payload);for(const event of events){const r=await forward(request,'/api/social/whatsapp/inbound',event,env,ctx);if(r.ok)processed++;else ignored++;}
     }
-    return json({ok:true,processed,ignored,replies_sent:repliesSent,reply_failures:replyFailures});
   }
-  return baseWorker.fetch(request,env,ctx);
-}};
+  console.log('Instagram polling complete',JSON.stringify({matched,processed,repliesSent,replyFailures}));
+  return {ok:true,matched,processed,replies_sent:repliesSent,reply_failures:replyFailures};
+}
+
+const worker={
+  async fetch(request,env,ctx){
+    const url=new URL(request.url),path=url.pathname.replace(/\/$/,'')||'/';
+    if(request.method==='GET'&&path==='/webhooks/meta'){
+      if(url.searchParams.get('hub.mode')!=='subscribe'||url.searchParams.get('hub.verify_token')!==env.META_WEBHOOK_VERIFY_TOKEN)return new Response('Forbidden',{status:403});
+      return new Response(url.searchParams.get('hub.challenge')||'',{status:200});
+    }
+    if(request.method==='POST'&&path==='/webhooks/meta'){
+      const checked=await verifiedBody(request,env);if(checked.error)return json({error:checked.error},checked.status);
+      const payload=checked.body;
+      try{await recordWebhookReceipt(env,payload)}catch(e){console.log('webhook receipt diagnostic failed',e?.message||e)}
+      let processed=0,ignored=0,repliesSent=0,replyFailures=0;
+      if(payload.object==='instagram'){
+        const events=instagramEvents(payload);
+        for(const event of events){
+          const result=await processInstagramEvent(request,event,env,ctx);
+          if(!result.processed){ignored++;continue;}
+          processed++;
+          if(result.reply?.sent)repliesSent++;
+          else if(!result.reply?.skipped&&event.source_type==='comment')replyFailures++;
+        }
+      }else if(payload.object==='whatsapp_business_account'){
+        const events=whatsappEvents(payload);for(const event of events){const r=await forward(request,'/api/social/whatsapp/inbound',event,env,ctx);if(r.ok)processed++;else ignored++;}
+      }
+      return json({ok:true,processed,ignored,replies_sent:repliesSent,reply_failures:replyFailures});
+    }
+    return baseWorker.fetch(request,env,ctx);
+  },
+  async scheduled(controller,env,ctx){
+    ctx.waitUntil(pollInstagramComments(env,ctx));
+  }
+};
+
+export default worker;
