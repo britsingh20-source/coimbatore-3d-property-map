@@ -1,0 +1,37 @@
+name: Validate Social Lead Architecture
+
+on:
+  pull_request:
+    paths:
+      - 'cloudflare/main-social-intake.js'
+      - 'cloudflare/main-whatsapp-capture.js'
+      - 'cloudflare/main-meta-webhooks.js'
+      - 'cloudflare/social-keywords.js'
+      - 'cloudflare/social_leads.sql'
+      - '.github/workflows/validate-social-leads.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Syntax check Worker modules
+        run: |
+          node --check cloudflare/social-keywords.js
+          node --check cloudflare/main-social-intake.js
+          node --check cloudflare/main-whatsapp-capture.js
+          node --check cloudflare/main-meta-webhooks.js
+      - name: Verify migration is additive
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! grep -Eiq 'DROP[[:space:]]+TABLE|DELETE[[:space:]]+FROM[[:space:]]+leads|ALTER[[:space:]]+TABLE[[:space:]]+leads[[:space:]]+DROP' cloudflare/social_leads.sql
+          grep -Eq 'CREATE TABLE IF NOT EXISTS social_leads' cloudflare/social_leads.sql
+          grep -Eq 'CREATE TABLE IF NOT EXISTS social_lead_events' cloudflare/social_leads.sql

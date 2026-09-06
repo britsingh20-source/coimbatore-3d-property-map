@@ -1,6 +1,6 @@
 name: Deploy CRM Backend to Cloudflare
 
-# Secret updates do not trigger GitHub Actions; touch this workflow to re-apply staff PIN secrets.
+# Secret updates do not trigger GitHub Actions; touch this workflow to re-apply runtime secrets.
 on:
   push:
     branches: [main]
@@ -19,6 +19,8 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.R2_ACCOUNT_ID }}
       CRM_IMPORT_TOKEN: ${{ secrets.CRM_IMPORT_TOKEN }}
+      META_APP_SECRET: ${{ secrets.META_APP_SECRET }}
+      META_WEBHOOK_VERIFY_TOKEN: ${{ secrets.META_WEBHOOK_VERIFY_TOKEN }}
       TC01_PIN: ${{ secrets.TC01_PIN }}
       TC02_PIN: ${{ secrets.TC02_PIN }}
       MG01_PIN: ${{ secrets.MG01_PIN }}
@@ -34,12 +36,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Verify Cloudflare credentials
+      - name: Verify required credentials
         shell: bash
         run: |
           set -euo pipefail
           [ -n "${CLOUDFLARE_API_TOKEN:-}" ] || { echo "CLOUDFLARE_API_TOKEN is missing"; exit 1; }
           [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ] || { echo "CLOUDFLARE_ACCOUNT_ID is missing"; exit 1; }
+          [ -n "${META_APP_SECRET:-}" ] || { echo "META_APP_SECRET is missing"; exit 1; }
+          [ -n "${META_WEBHOOK_VERIFY_TOKEN:-}" ] || { echo "META_WEBHOOK_VERIFY_TOKEN is missing"; exit 1; }
       - name: Install Wrangler
         run: npm install --no-save wrangler@latest
       - name: Find or create D1 database
@@ -60,7 +64,7 @@ jobs:
         run: |
           cat > wrangler.crm.toml <<EOF
           name = "${WORKER_NAME}"
-          main = "cloudflare/main-property-catalog.js"
+          main = "cloudflare/main-meta-webhooks.js"
           compatibility_date = "2026-09-01"
           workers_dev = true
           [vars]
@@ -86,6 +90,7 @@ jobs:
           npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/primary_working_areas.sql
           npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/daily_lead_import.sql
           npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/property_catalog.sql
+          npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/social_leads.sql
           npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --command "ALTER TABLE property_images ADD COLUMN image_base64 TEXT" || true
       - name: Migrate existing session table
         shell: bash
@@ -121,6 +126,12 @@ jobs:
       - name: Configure secure import token
         if: ${{ env.CRM_IMPORT_TOKEN != '' }}
         run: printf '%s' "$CRM_IMPORT_TOKEN" | npx wrangler secret put IMPORT_TOKEN --config wrangler.crm.toml
+      - name: Configure Meta webhook secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$META_APP_SECRET" | npx wrangler secret put META_APP_SECRET --config wrangler.crm.toml
+          printf '%s' "$META_WEBHOOK_VERIFY_TOKEN" | npx wrangler secret put META_WEBHOOK_VERIFY_TOKEN --config wrangler.crm.toml
       - name: Configure staff PINs
         if: ${{ env.CRM_IMPORT_TOKEN != '' }}
         shell: bash
@@ -143,13 +154,19 @@ jobs:
           set_pin MG02 "$MG02_PIN"
           set_pin AD01 "$AD01_PIN"
           set_pin DR01 "$DR01_PIN"
-      - name: Verify backend health and protected routes
+      - name: Verify backend health, Meta webhook and protected routes
         shell: bash
         run: |
           set -euo pipefail
           sleep 5
           URL='${{ steps.deploy.outputs.worker_url }}'
           curl -fsS "$URL/api/health"
+          CHALLENGE="crm-meta-webhook-ok"
+          VERIFY=$(curl -fsS -G "$URL/webhooks/meta" \
+            --data-urlencode "hub.mode=subscribe" \
+            --data-urlencode "hub.verify_token=$META_WEBHOOK_VERIFY_TOKEN" \
+            --data-urlencode "hub.challenge=$CHALLENGE")
+          test "$VERIFY" = "$CHALLENGE"
           STATUS=$(curl -sS -o /tmp/work-hours-probe.json -w '%{http_code}' "$URL/api/work-hours")
           test "$STATUS" = "401"
           jq -e '.error == "Session expired"' /tmp/work-hours-probe.json >/dev/null
@@ -168,7 +185,7 @@ jobs:
             echo "$AREA_JSON" | jq -e --arg CODE "$CODE" '.areas | any(.code == $CODE)' >/dev/null
           done
           echo "$AREA_JSON" | jq -e '.priority_config.p1_max_km == 12' >/dev/null
-          echo "CRM core routes plus telecaller performance route are live"
+          echo "CRM core routes and Meta webhook verification are live"
       - name: Update frontend runtime API URL
         shell: bash
         run: |
@@ -181,7 +198,7 @@ jobs:
           } > public/runtime-config.js
           if git diff --quiet -- public/runtime-config.js; then exit 0; fi
           git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.email "4189822+github-actions[bot]@users.noreply.github.com"
           git add public/runtime-config.js
           git commit -m "Connect CRM frontend to Cloudflare Worker"
           git pull --rebase origin main
