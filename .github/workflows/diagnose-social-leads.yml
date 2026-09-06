@@ -45,15 +45,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo '=== META WEBHOOK RECEIPTS (NO USER DATA) ==='
-          npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.diag.toml --command "SELECT object_type,field_name,COUNT(*) AS count,MAX(received_at) AS latest_received_at FROM meta_webhook_receipts GROUP BY object_type,field_name ORDER BY latest_received_at DESC;"
-          echo '=== LATEST META RECEIPTS (NO USER DATA) ==='
-          npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.diag.toml --command "SELECT id,object_type,field_name,received_at FROM meta_webhook_receipts ORDER BY id DESC LIMIT 20;"
-          echo '=== SOCIAL LEAD COUNTS ==='
-          npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.diag.toml --command "SELECT COUNT(*) AS total, SUM(CASE WHEN keyword='KARAMADAI' THEN 1 ELSE 0 END) AS karamadai_total, SUM(CASE WHEN status='WhatsApp Link Sent' THEN 1 ELSE 0 END) AS whatsapp_links_sent FROM social_leads;"
-          echo '=== LATEST SOCIAL LEADS (NO USER IDENTIFIERS) ==='
-          npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.diag.toml --command "SELECT id,keyword,interested_area,status,created_at,updated_at FROM social_leads ORDER BY id DESC LIMIT 10;"
-          echo '=== LATEST SOCIAL EVENTS (NO PAYLOADS) ==='
-          npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.diag.toml --command "SELECT social_lead_id,event_type,created_at FROM social_lead_events ORDER BY id DESC LIMIT 20;"
+          echo '=== AREA FLOW COUNTS ==='
+          npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.diag.toml --command "SELECT COUNT(*) AS total_social_leads, SUM(CASE WHEN keyword='AREA' THEN 1 ELSE 0 END) AS area_keyword_total, SUM(CASE WHEN interested_area='Kalapatti' THEN 1 ELSE 0 END) AS kalapatti_selected_total, SUM(CASE WHEN status='Phone Requested' THEN 1 ELSE 0 END) AS phone_requested_total, SUM(CASE WHEN status='Number Captured' THEN 1 ELSE 0 END) AS number_captured_total FROM social_leads;"
+          echo '=== LATEST AREA FLOW LEADS (NO USER IDENTIFIERS) ==='
+          npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.diag.toml --command "SELECT id,keyword,interested_area,status,CASE WHEN lead_id IS NOT NULL THEN 1 ELSE 0 END AS linked_to_crm,created_at,updated_at FROM social_leads ORDER BY id DESC LIMIT 10;"
+          echo '=== LATEST AREA FLOW EVENTS (NO PAYLOADS) ==='
+          npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.diag.toml --command "SELECT social_lead_id,event_type,created_at FROM social_lead_events WHERE event_type IN ('instagram_area_menu_sent','instagram_area_selected','instagram_phone_requested','instagram_phone_request_failed','instagram_phone_captured') ORDER BY id DESC LIMIT 30;"
           echo '=== DIAGNOSTIC RUN MARKER ==='
-          echo 'KARAMADAI live test check'
+          echo 'AREA/Kalapatti live selection check'
