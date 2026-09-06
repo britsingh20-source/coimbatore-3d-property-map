@@ -77,7 +77,8 @@ async function summary(env){
 }
 
 export default {async fetch(request,env,ctx){
-  const path=new URL(request.url).pathname.replace(/\/$/,'')||'/';
+  const url=new URL(request.url);
+  const path=url.pathname.replace(/\/$/,'')||'/';
   if(request.method==='OPTIONS')return new Response(null,{status:204,headers:corsHeaders(env)});
   if(request.method==='POST'&&path==='/api/social/instagram/intake'){
     const body=await request.json().catch(()=>({}));
@@ -88,6 +89,11 @@ export default {async fetch(request,env,ctx){
     const body=await request.json().catch(()=>({}));
     const result=await selectAreaFromLanding(env,body);
     return json(result,result.status||200,env);
+  }
+  if(request.method==='GET'&&path==='/api/social/area/go'){
+    const result=await selectAreaFromLanding(env,{ref:url.searchParams.get('ref'),area:url.searchParams.get('area')});
+    if(!result.ok)return new Response(result.error||'Unable to continue',{status:result.status||400,headers:{'content-type':'text/plain; charset=utf-8','cache-control':'no-store'}});
+    return Response.redirect(result.whatsapp_url,302);
   }
   if(request.method==='GET'&&path==='/api/social/summary')return json(await summary(env),200,env);
   return baseWorker.fetch(request,env,ctx);
