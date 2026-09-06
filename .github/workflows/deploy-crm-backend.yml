@@ -21,6 +21,7 @@ jobs:
       CRM_IMPORT_TOKEN: ${{ secrets.CRM_IMPORT_TOKEN }}
       META_APP_SECRET: ${{ secrets.META_APP_SECRET }}
       META_WEBHOOK_VERIFY_TOKEN: ${{ secrets.META_WEBHOOK_VERIFY_TOKEN }}
+      INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
       TC01_PIN: ${{ secrets.TC01_PIN }}
       TC02_PIN: ${{ secrets.TC02_PIN }}
       MG01_PIN: ${{ secrets.MG01_PIN }}
@@ -44,6 +45,7 @@ jobs:
           [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ] || { echo "CLOUDFLARE_ACCOUNT_ID is missing"; exit 1; }
           [ -n "${META_APP_SECRET:-}" ] || { echo "META_APP_SECRET is missing"; exit 1; }
           [ -n "${META_WEBHOOK_VERIFY_TOKEN:-}" ] || { echo "META_WEBHOOK_VERIFY_TOKEN is missing"; exit 1; }
+          [ -n "${INSTAGRAM_ACCESS_TOKEN:-}" ] || { echo "INSTAGRAM_ACCESS_TOKEN is missing"; exit 1; }
       - name: Install Wrangler
         run: npm install --no-save wrangler@latest
       - name: Find or create D1 database
@@ -126,12 +128,13 @@ jobs:
       - name: Configure secure import token
         if: ${{ env.CRM_IMPORT_TOKEN != '' }}
         run: printf '%s' "$CRM_IMPORT_TOKEN" | npx wrangler secret put IMPORT_TOKEN --config wrangler.crm.toml
-      - name: Configure Meta webhook secrets
+      - name: Configure Meta and Instagram secrets
         shell: bash
         run: |
           set -euo pipefail
           printf '%s' "$META_APP_SECRET" | npx wrangler secret put META_APP_SECRET --config wrangler.crm.toml
           printf '%s' "$META_WEBHOOK_VERIFY_TOKEN" | npx wrangler secret put META_WEBHOOK_VERIFY_TOKEN --config wrangler.crm.toml
+          printf '%s' "$INSTAGRAM_ACCESS_TOKEN" | npx wrangler secret put INSTAGRAM_ACCESS_TOKEN --config wrangler.crm.toml
       - name: Configure staff PINs
         if: ${{ env.CRM_IMPORT_TOKEN != '' }}
         shell: bash
