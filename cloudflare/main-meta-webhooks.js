@@ -58,14 +58,11 @@ function instagramEvents(payload){
       const v=change.value||{},text=String(v.text||'');
       const match=detectSocialKeyword(text);if(!match)continue;
       const username=String(v.from?.username||'');
-      out.push({
-        professional_account_id:professionalAccountId,
-        platform_user_id:String(v.from?.id||username||v.id||''),username,
-        source_type:'comment',media_id:String(v.media?.id||v.media_id||''),comment_id:String(v.id||''),text
-      });
+      out.push({professional_account_id:professionalAccountId,platform_user_id:String(v.from?.id||username||v.id||''),username,source_type:'comment',media_id:String(v.media?.id||v.media_id||''),comment_id:String(v.id||''),text});
     }
     for(const msg of entry.messaging||[]){
-      const text=String(msg.message?.text||'');const match=detectSocialKeyword(text);if(!match)continue;
+      const text=String(msg.message?.text||'').trim();
+      if(!text)continue;
       out.push({professional_account_id:professionalAccountId,platform_user_id:String(msg.sender?.id||''),username:'',source_type:'dm',media_id:'',comment_id:'',text});
     }
   }
@@ -102,8 +99,7 @@ function whatsappLink(env,keyword,token){
 
 async function logSocialEvent(env,socialLeadId,eventType,payload){
   if(!socialLeadId)return;
-  await env.DB.prepare('INSERT INTO social_lead_events(social_lead_id,event_type,event_payload) VALUES(?,?,?)')
-    .bind(socialLeadId,eventType,JSON.stringify(payload||{})).run();
+  await env.DB.prepare('INSERT INTO social_lead_events(social_lead_id,event_type,event_payload) VALUES(?,?,?)').bind(socialLeadId,eventType,JSON.stringify(payload||{})).run();
 }
 
 async function replyAlreadySent(env,socialLeadId){
@@ -112,33 +108,76 @@ async function replyAlreadySent(env,socialLeadId){
   return !!row;
 }
 
+function instagramEndpoint(env,professionalAccountId){
+  const prefix=env.INSTAGRAM_API_VERSION?`${env.INSTAGRAM_API_VERSION.replace(/^\/+|\/+$/g,'')}/`:'';
+  return `https://graph.instagram.com/${prefix}${encodeURIComponent(professionalAccountId)}/messages`;
+}
+
 async function sendInstagramPrivateReply(env,event,intake){
   if(event.source_type!=='comment'||!event.comment_id||!event.professional_account_id)return {sent:false,reason:'Not a comment event'};
   if(!env.INSTAGRAM_ACCESS_TOKEN)return {sent:false,reason:'Instagram access token unavailable'};
   if(await replyAlreadySent(env,intake.social_lead_id))return {sent:false,skipped:true,reason:'Reply already sent'};
-  const link=whatsappLink(env,intake.keyword,intake.whatsapp_prefill_token);
-  if(!link)return {sent:false,reason:'WhatsApp lead number unavailable'};
-  const text=`Thanks for your interest in ${intake.area} properties. Tap this WhatsApp link to receive matching properties privately: ${link}`;
-  const prefix=env.INSTAGRAM_API_VERSION?`${env.INSTAGRAM_API_VERSION.replace(/^\/+|\/+$/g,'')}/`:'';
-  const endpoint=`https://graph.instagram.com/${prefix}${encodeURIComponent(event.professional_account_id)}/messages`;
-  const response=await fetch(endpoint,{method:'POST',headers:{'content-type':'application/json','authorization':`Bearer ${env.INSTAGRAM_ACCESS_TOKEN}`},body:JSON.stringify({recipient:{comment_id:event.comment_id},message:{text}})});
+  const text=`Thanks for your interest in ${intake.area} properties. Reply WHATSAPP to this message and we will send you a tappable WhatsApp button.`;
+  const response=await fetch(instagramEndpoint(env,event.professional_account_id),{method:'POST',headers:{'content-type':'application/json','authorization':`Bearer ${env.INSTAGRAM_ACCESS_TOKEN}`},body:JSON.stringify({recipient:{comment_id:event.comment_id},message:{text}})});
   const body=await response.json().catch(()=>({}));
   if(!response.ok){
     await logSocialEvent(env,intake.social_lead_id,'instagram_private_reply_failed',{status:response.status,error:body?.error?.message||'Instagram API error'});
     return {sent:false,status:response.status,error:body?.error?.message||'Instagram API error'};
   }
-  await env.DB.prepare("UPDATE social_leads SET status='WhatsApp Link Sent',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(intake.social_lead_id).run();
+  await env.DB.prepare("UPDATE social_leads SET status='Instagram Reply Requested',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(intake.social_lead_id).run();
   await logSocialEvent(env,intake.social_lead_id,'instagram_private_reply_sent',{message_id:body.message_id||null,recipient_id:body.recipient_id||null});
   return {sent:true,message_id:body.message_id||null};
 }
 
+async function latestInstagramLead(env,platformUserId){
+  return env.DB.prepare(`SELECT id AS social_lead_id,keyword,interested_area AS area,whatsapp_prefill_token,status FROM social_leads WHERE platform='instagram' AND platform_user_id=? ORDER BY id DESC LIMIT 1`).bind(platformUserId).first();
+}
+
+async function sendInstagramWhatsAppButton(env,event,intake){
+  if(event.source_type!=='dm'||!event.professional_account_id||!event.platform_user_id)return {sent:false,reason:'Not a DM event'};
+  if(!env.INSTAGRAM_ACCESS_TOKEN)return {sent:false,reason:'Instagram access token unavailable'};
+  const link=whatsappLink(env,intake.keyword,intake.whatsapp_prefill_token);
+  if(!link)return {sent:false,reason:'WhatsApp lead number unavailable'};
+  const payload={
+    recipient:{id:event.platform_user_id},
+    message:{attachment:{type:'template',payload:{template_type:'button',text:`Continue your ${intake.area} property enquiry on WhatsApp.`,buttons:[{type:'web_url',url:link,title:'Open WhatsApp'}]}}}
+  };
+  const response=await fetch(instagramEndpoint(env,event.professional_account_id),{method:'POST',headers:{'content-type':'application/json','authorization':`Bearer ${env.INSTAGRAM_ACCESS_TOKEN}`},body:JSON.stringify(payload)});
+  const body=await response.json().catch(()=>({}));
+  if(!response.ok){
+    await logSocialEvent(env,intake.social_lead_id,'instagram_whatsapp_button_failed',{status:response.status,error:body?.error?.message||'Instagram API error'});
+    return {sent:false,status:response.status,error:body?.error?.message||'Instagram API error'};
+  }
+  await env.DB.prepare("UPDATE social_leads SET status='WhatsApp Link Sent',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(intake.social_lead_id).run();
+  await logSocialEvent(env,intake.social_lead_id,'instagram_whatsapp_button_sent',{message_id:body.message_id||null,recipient_id:body.recipient_id||null});
+  return {sent:true,message_id:body.message_id||null};
+}
+
 async function processInstagramEvent(request,event,env,ctx){
-  const r=await forward(request,'/api/social/instagram/intake',event,env,ctx);
-  if(!r.ok)return {processed:false,ignored:true};
-  const intake=await r.json().catch(()=>null);
-  if(!intake?.ok)return {processed:false,ignored:true};
-  const reply=await sendInstagramPrivateReply(env,event,intake);
-  return {processed:true,intake,reply};
+  if(event.source_type==='comment'){
+    const r=await forward(request,'/api/social/instagram/intake',event,env,ctx);
+    if(!r.ok)return {processed:false,ignored:true};
+    const intake=await r.json().catch(()=>null);
+    if(!intake?.ok)return {processed:false,ignored:true};
+    const reply=await sendInstagramPrivateReply(env,event,intake);
+    return {processed:true,intake,reply};
+  }
+
+  if(event.source_type==='dm'){
+    let intake=await latestInstagramLead(env,event.platform_user_id);
+    const keywordMatch=detectSocialKeyword(event.text||'');
+    const wantsWhatsApp=/\bWHATSAPP\b/i.test(event.text||'');
+    if(!intake&&keywordMatch){
+      const r=await forward(request,'/api/social/instagram/intake',event,env,ctx);
+      if(r.ok)intake=await r.json().catch(()=>null);
+    }
+    if(!intake)return {processed:false,ignored:true};
+    if(!wantsWhatsApp&&!keywordMatch)return {processed:false,ignored:true};
+    const reply=await sendInstagramWhatsAppButton(env,event,intake);
+    return {processed:true,intake,reply};
+  }
+
+  return {processed:false,ignored:true};
 }
 
 async function pollInstagramComments(env,ctx){
@@ -209,7 +248,7 @@ const worker={
           if(!result.processed){ignored++;continue;}
           processed++;
           if(result.reply?.sent)repliesSent++;
-          else if(!result.reply?.skipped&&event.source_type==='comment')replyFailures++;
+          else if(!result.reply?.skipped)replyFailures++;
         }
       }else if(payload.object==='whatsapp_business_account'){
         const events=whatsappEvents(payload);for(const event of events){const r=await forward(request,'/api/social/whatsapp/inbound',event,env,ctx);if(r.ok)processed++;else ignored++;}
@@ -218,9 +257,7 @@ const worker={
     }
     return baseWorker.fetch(request,env,ctx);
   },
-  async scheduled(controller,env,ctx){
-    ctx.waitUntil(pollInstagramComments(env,ctx));
-  }
+  async scheduled(controller,env,ctx){ctx.waitUntil(pollInstagramComments(env,ctx));}
 };
 
 export default worker;
