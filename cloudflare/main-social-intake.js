@@ -70,10 +70,50 @@ async function selectAreaFromLanding(env,body){
   return {ok:true,social_lead_id:lead.id,area:selection.area,status:'Area Selected - WhatsApp Opening',whatsapp_url:whatsappUrl(env,selection.area,token)};
 }
 
-async function summary(env){
-  const totals=await env.DB.prepare(`SELECT COUNT(*) total,SUM(CASE WHEN status='WhatsApp Pending' THEN 1 ELSE 0 END) whatsapp_pending,SUM(CASE WHEN status='Area Selection Pending' THEN 1 ELSE 0 END) area_selection_pending,SUM(CASE WHEN lead_id IS NOT NULL THEN 1 ELSE 0 END) linked_to_crm FROM social_leads`).first();
-  const byKeyword=(await env.DB.prepare("SELECT keyword,interested_area,COUNT(*) count FROM social_leads GROUP BY keyword,interested_area ORDER BY count DESC").all()).results||[];
-  return {ok:true,totals,by_keyword:byKeyword};
+function validDate(value){
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(value||'')) ? String(value) : null;
+}
+
+async function summary(env,dateValue=null){
+  const date=validDate(dateValue);
+  if(!date){
+    const totals=await env.DB.prepare(`SELECT COUNT(*) total,SUM(CASE WHEN status='WhatsApp Pending' THEN 1 ELSE 0 END) whatsapp_pending,SUM(CASE WHEN status='Area Selection Pending' THEN 1 ELSE 0 END) area_selection_pending,SUM(CASE WHEN lead_id IS NOT NULL THEN 1 ELSE 0 END) linked_to_crm FROM social_leads`).first();
+    const byKeyword=(await env.DB.prepare("SELECT keyword,interested_area,COUNT(*) count FROM social_leads GROUP BY keyword,interested_area ORDER BY count DESC").all()).results||[];
+    return {ok:true,totals,by_keyword:byKeyword};
+  }
+
+  const localDateExpr="date(datetime(created_at,'+5 hours','+30 minutes'))";
+  const commentsRow=await env.DB.prepare(`SELECT COUNT(*) AS count FROM social_leads WHERE platform='instagram' AND keyword='AREA' AND ${localDateExpr}=?`).bind(date).first();
+  const selectedRow=await env.DB.prepare(`SELECT COUNT(DISTINCT social_lead_id) AS count FROM social_lead_events WHERE event_type='landing_area_selected' AND ${localDateExpr}=?`).bind(date).first();
+  const capturedRow=await env.DB.prepare(`SELECT COUNT(DISTINCT social_lead_id) AS count FROM social_lead_events WHERE event_type IN ('whatsapp_number_captured','instagram_phone_captured') AND ${localDateExpr}=?`).bind(date).first();
+  const crmNewRow=await env.DB.prepare(`SELECT COUNT(DISTINCT lead_id) AS count FROM social_lead_events WHERE event_type IN ('whatsapp_number_captured','instagram_phone_captured') AND lead_id IS NOT NULL AND ${localDateExpr}=?`).bind(date).first().catch(()=>null);
+
+  const byArea=(await env.DB.prepare(`
+    SELECT COALESCE(sl.interested_area,'Not selected') AS area,
+           COUNT(DISTINCT sl.id) AS enquiries,
+           COUNT(DISTINCT CASE WHEN se.event_type='landing_area_selected' THEN sl.id END) AS selected,
+           COUNT(DISTINCT CASE WHEN se.event_type IN ('whatsapp_number_captured','instagram_phone_captured') THEN sl.id END) AS captured
+    FROM social_leads sl
+    LEFT JOIN social_lead_events se ON se.social_lead_id=sl.id AND date(datetime(se.created_at,'+5 hours','+30 minutes'))=?
+    WHERE sl.platform='instagram' AND sl.keyword='AREA' AND date(datetime(sl.created_at,'+5 hours','+30 minutes'))<=?
+    GROUP BY COALESCE(sl.interested_area,'Not selected')
+    HAVING selected>0 OR captured>0 OR (area='Not selected' AND enquiries>0)
+    ORDER BY captured DESC, selected DESC, area ASC
+  `).bind(date,date).all()).results||[];
+
+  return {
+    ok:true,
+    date,
+    timezone:'Asia/Kolkata',
+    metrics:{
+      area_comments:Number(commentsRow?.count||0),
+      area_selected:Number(selectedRow?.count||0),
+      whatsapp_opened:Number(selectedRow?.count||0),
+      crm_leads_captured:Number(capturedRow?.count||0),
+      unique_crm_leads:Number(crmNewRow?.count||capturedRow?.count||0)
+    },
+    by_area:byArea
+  };
 }
 
 export default {async fetch(request,env,ctx){
@@ -95,6 +135,6 @@ export default {async fetch(request,env,ctx){
     if(!result.ok)return new Response(result.error||'Unable to continue',{status:result.status||400,headers:{'content-type':'text/plain; charset=utf-8','cache-control':'no-store'}});
     return Response.redirect(result.whatsapp_url,302);
   }
-  if(request.method==='GET'&&path==='/api/social/summary')return json(await summary(env),200,env);
+  if(request.method==='GET'&&path==='/api/social/summary')return json(await summary(env,url.searchParams.get('date')),200,env);
   return baseWorker.fetch(request,env,ctx);
 }};
