@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/deploy-instagram-polling-worker.yml'
+      - 'cloudflare/main-instagram-fast-poll.js'
   workflow_run:
     workflows: ['Deploy CRM Backend to Cloudflare']
     types: [completed]
@@ -36,7 +37,7 @@ jobs:
           [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ] || { echo 'CLOUDFLARE_ACCOUNT_ID missing'; exit 1; }
       - name: Install Wrangler
         run: npm install --no-save wrangler@latest
-      - name: Resolve D1 and deploy one-minute polling trigger
+      - name: Resolve D1 and deploy fast polling trigger
         shell: bash
         run: |
           set -euo pipefail
@@ -45,7 +46,7 @@ jobs:
           [ -n "$DB_ID" ] || { echo 'Unable to resolve D1 database'; exit 1; }
           cat > wrangler.instagram-poll.toml <<EOF
           name = "${WORKER_NAME}"
-          main = "cloudflare/main-meta-webhooks.js"
+          main = "cloudflare/main-instagram-fast-poll.js"
           compatibility_date = "2026-09-01"
           workers_dev = true
           [vars]
@@ -58,4 +59,4 @@ jobs:
           database_id = "${DB_ID}"
           EOF
           npx wrangler deploy --config wrangler.instagram-poll.toml
-          echo 'Instagram comment polling is scheduled every minute.'
+          echo 'Instagram fallback now polls approximately every 10 seconds.'
