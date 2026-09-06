@@ -25,6 +25,23 @@ async function verifiedBody(request,env){
   try{return {body:JSON.parse(raw)}}catch{return {error:'Invalid JSON',status:400}}
 }
 
+async function recordWebhookReceipt(env,payload){
+  if(!env.DB)return;
+  const objectType=String(payload?.object||'unknown').slice(0,80);
+  const fields=[];
+  for(const entry of payload?.entry||[]){
+    for(const change of entry?.changes||[]){
+      const field=String(change?.field||'unknown').slice(0,80);
+      if(field)fields.push(field);
+    }
+    if(Array.isArray(entry?.messaging)&&entry.messaging.length)fields.push('messages');
+  }
+  const unique=[...new Set(fields.length?fields:['unknown'])].slice(0,20);
+  for(const field of unique){
+    await env.DB.prepare('INSERT INTO meta_webhook_receipts(object_type,field_name) VALUES(?,?)').bind(objectType,field).run();
+  }
+}
+
 function instagramEvents(payload){
   const out=[];
   for(const entry of payload.entry||[]){
@@ -109,6 +126,7 @@ export default {async fetch(request,env,ctx){
   if(request.method==='POST'&&path==='/webhooks/meta'){
     const checked=await verifiedBody(request,env);if(checked.error)return json({error:checked.error},checked.status);
     const payload=checked.body;
+    try{await recordWebhookReceipt(env,payload)}catch(e){console.log('webhook receipt diagnostic failed',e?.message||e)}
     let processed=0,ignored=0,repliesSent=0,replyFailures=0;
     if(payload.object==='instagram'){
       const events=instagramEvents(payload);
