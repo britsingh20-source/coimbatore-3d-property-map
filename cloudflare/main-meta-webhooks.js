@@ -25,12 +25,19 @@ async function verifiedBody(request,env){
   try{return {body:JSON.parse(raw)}}catch{return {error:'Invalid JSON',status:400}}
 }
 
+function entryChanges(entry){
+  const changes=[];
+  if(entry?.field)changes.push({field:entry.field,value:entry.value||{}});
+  for(const change of entry?.changes||[])changes.push(change);
+  return changes;
+}
+
 async function recordWebhookReceipt(env,payload){
   if(!env.DB)return;
   const objectType=String(payload?.object||'unknown').slice(0,80);
   const fields=[];
   for(const entry of payload?.entry||[]){
-    for(const change of entry?.changes||[]){
+    for(const change of entryChanges(entry)){
       const field=String(change?.field||'unknown').slice(0,80);
       if(field)fields.push(field);
     }
@@ -46,13 +53,14 @@ function instagramEvents(payload){
   const out=[];
   for(const entry of payload.entry||[]){
     const professionalAccountId=String(entry.id||'');
-    for(const change of entry.changes||[]){
+    for(const change of entryChanges(entry)){
       if(change.field!=='comments')continue;
       const v=change.value||{},text=String(v.text||'');
       const match=detectSocialKeyword(text);if(!match)continue;
+      const username=String(v.from?.username||'');
       out.push({
         professional_account_id:professionalAccountId,
-        platform_user_id:String(v.from?.id||''),username:String(v.from?.username||''),
+        platform_user_id:String(v.from?.id||username||v.id||''),username,
         source_type:'comment',media_id:String(v.media?.id||v.media_id||''),comment_id:String(v.id||''),text
       });
     }
@@ -66,7 +74,7 @@ function instagramEvents(payload){
 
 function whatsappEvents(payload){
   const out=[];
-  for(const entry of payload.entry||[])for(const change of entry.changes||[]){
+  for(const entry of payload.entry||[])for(const change of entryChanges(entry)){
     const value=change.value||{};if(!Array.isArray(value.messages))continue;
     const contacts=new Map((value.contacts||[]).map(c=>[String(c.wa_id||''),c.profile?.name||'']));
     for(const msg of value.messages){
