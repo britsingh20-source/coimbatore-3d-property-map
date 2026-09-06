@@ -55,3 +55,5 @@ jobs:
           npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.diag.toml --command "SELECT id,keyword,interested_area,status,created_at,updated_at FROM social_leads ORDER BY id DESC LIMIT 10;"
           echo '=== LATEST SOCIAL EVENTS (NO PAYLOADS) ==='
           npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.diag.toml --command "SELECT social_lead_id,event_type,created_at FROM social_lead_events ORDER BY id DESC LIMIT 20;"
+          echo '=== DIAGNOSTIC RUN MARKER ==='
+          echo 'KARAMADAI live test check'
