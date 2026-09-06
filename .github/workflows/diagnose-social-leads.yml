@@ -45,6 +45,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          echo '=== META WEBHOOK RECEIPTS (NO USER DATA) ==='
+          npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.diag.toml --command "SELECT object_type,field_name,COUNT(*) AS count,MAX(received_at) AS latest_received_at FROM meta_webhook_receipts GROUP BY object_type,field_name ORDER BY latest_received_at DESC;"
+          echo '=== LATEST META RECEIPTS (NO USER DATA) ==='
+          npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.diag.toml --command "SELECT id,object_type,field_name,received_at FROM meta_webhook_receipts ORDER BY id DESC LIMIT 20;"
           echo '=== SOCIAL LEAD COUNTS ==='
           npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.diag.toml --command "SELECT COUNT(*) AS total, SUM(CASE WHEN keyword='KARAMADAI' THEN 1 ELSE 0 END) AS karamadai_total, SUM(CASE WHEN status='WhatsApp Link Sent' THEN 1 ELSE 0 END) AS whatsapp_links_sent FROM social_leads;"
           echo '=== LATEST SOCIAL LEADS (NO USER IDENTIFIERS) ==='
