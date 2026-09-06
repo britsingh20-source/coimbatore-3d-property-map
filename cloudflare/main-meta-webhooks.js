@@ -94,8 +94,15 @@ async function forward(request,path,payload,env,ctx){
 function whatsappLink(env,keyword,token){
   const number=String(env.WHATSAPP_LEAD_NUMBER||'918148127587').replace(/\D/g,'');
   if(!number)return null;
-  const message=`${keyword} property enquiry from Instagram. Ref: ${token}`;
+  const message=`Hi, I need property details in ${keyword}. Ref: ${token}`;
   return `https://wa.me/${number}?text=${encodeURIComponent(message)}`;
+}
+
+function propertyDetailsLink(env,token){
+  const base=String(env.PROPERTY_DETAILS_URL||'https://britsingh20-source.github.io/coimbatore-3d-property-map/property-details.html').trim();
+  const url=new URL(base);
+  url.searchParams.set('ref',token);
+  return url.toString();
 }
 
 async function logSocialEvent(env,socialLeadId,eventType,payload){
@@ -106,7 +113,7 @@ async function logSocialEvent(env,socialLeadId,eventType,payload){
 async function commentReplyAlreadySent(env,socialLeadId,commentId){
   if(!socialLeadId||!commentId)return false;
   const needle=`%${String(commentId).replace(/[%_]/g,'')}%`;
-  const row=await env.DB.prepare("SELECT 1 AS sent FROM social_lead_events WHERE social_lead_id=? AND event_type IN ('instagram_private_reply_sent','instagram_area_menu_sent') AND COALESCE(event_payload,'') LIKE ? LIMIT 1").bind(socialLeadId,needle).first();
+  const row=await env.DB.prepare("SELECT 1 AS sent FROM social_lead_events WHERE social_lead_id=? AND event_type IN ('instagram_private_reply_sent','instagram_area_menu_sent','instagram_property_details_link_sent') AND COALESCE(event_payload,'') LIKE ? LIMIT 1").bind(socialLeadId,needle).first();
   return !!row;
 }
 
@@ -129,14 +136,15 @@ async function sendInstagramAreaMenu(env,event,intake){
   if(event.source_type!=='comment'||!event.comment_id||!event.professional_account_id)return {sent:false,reason:'Not a comment event'};
   if(!env.INSTAGRAM_ACCESS_TOKEN)return {sent:false,reason:'Instagram access token unavailable'};
   if(await commentReplyAlreadySent(env,intake.social_lead_id,event.comment_id))return {sent:false,skipped:true,reason:'This comment was already answered'};
-  const payload={recipient:{comment_id:event.comment_id},message:{text:'Choose the area you are looking for:',quick_replies:areaQuickReplies()}};
-  const result=await postInstagramMessage(env,event.professional_account_id,payload);
+  const link=propertyDetailsLink(env,intake.whatsapp_prefill_token);
+  const text=`For property details, choose your preferred area here: ${link}`;
+  const result=await postInstagramMessage(env,event.professional_account_id,{recipient:{comment_id:event.comment_id},message:{text}});
   if(!result.ok){
-    await logSocialEvent(env,intake.social_lead_id,'instagram_area_menu_failed',{status:result.status,error:result.body?.error?.message||'Instagram API error',comment_id:event.comment_id});
+    await logSocialEvent(env,intake.social_lead_id,'instagram_property_details_link_failed',{status:result.status,error:result.body?.error?.message||'Instagram API error',comment_id:event.comment_id});
     return {sent:false,status:result.status,error:result.body?.error?.message||'Instagram API error'};
   }
-  await env.DB.prepare("UPDATE social_leads SET status='Area Selection Pending',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(intake.social_lead_id).run();
-  await logSocialEvent(env,intake.social_lead_id,'instagram_area_menu_sent',{message_id:result.body.message_id||null,comment_id:event.comment_id});
+  await env.DB.prepare("UPDATE social_leads SET status='Property Details Link Sent',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(intake.social_lead_id).run();
+  await logSocialEvent(env,intake.social_lead_id,'instagram_property_details_link_sent',{message_id:result.body.message_id||null,comment_id:event.comment_id});
   return {sent:true,message_id:result.body.message_id||null};
 }
 
@@ -249,8 +257,8 @@ async function processInstagramEvent(request,event,env,ctx){
     }
     if(!intake)return {processed:false,ignored:true};
     if(keywordMatch?.keyword==='AREA'){
-      const payload={recipient:{id:event.platform_user_id},message:{text:'Choose the area you are looking for:',quick_replies:areaQuickReplies()}};
-      const result=await postInstagramMessage(env,event.professional_account_id,payload);
+      const link=propertyDetailsLink(env,intake.whatsapp_prefill_token);
+      const result=await postInstagramMessage(env,event.professional_account_id,{recipient:{id:event.platform_user_id},message:{text:`For property details, choose your preferred area here: ${link}`}});
       return {processed:true,intake,reply:{sent:result.ok,status:result.status}};
     }
     if(!wantsWhatsApp&&!keywordMatch)return {processed:false,ignored:true};
