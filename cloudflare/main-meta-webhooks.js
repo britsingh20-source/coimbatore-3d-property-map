@@ -137,7 +137,8 @@ async function sendInstagramAreaMenu(env,event,intake){
   if(!env.INSTAGRAM_ACCESS_TOKEN)return {sent:false,reason:'Instagram access token unavailable'};
   if(await commentReplyAlreadySent(env,intake.social_lead_id,event.comment_id))return {sent:false,skipped:true,reason:'This comment was already answered'};
   const link=propertyDetailsLink(env,intake.whatsapp_prefill_token);
-  const text=`For property details, choose your preferred area here: ${link}`;
+  const text=`For property details,
+${link}`;
   const result=await postInstagramMessage(env,event.professional_account_id,{recipient:{comment_id:event.comment_id},message:{text}});
   if(!result.ok){
     await logSocialEvent(env,intake.social_lead_id,'instagram_property_details_link_failed',{status:result.status,error:result.body?.error?.message||'Instagram API error',comment_id:event.comment_id});
@@ -258,7 +259,8 @@ async function processInstagramEvent(request,event,env,ctx){
     if(!intake)return {processed:false,ignored:true};
     if(keywordMatch?.keyword==='AREA'){
       const link=propertyDetailsLink(env,intake.whatsapp_prefill_token);
-      const result=await postInstagramMessage(env,event.professional_account_id,{recipient:{id:event.platform_user_id},message:{text:`For property details, choose your preferred area here: ${link}`}});
+      const result=await postInstagramMessage(env,event.professional_account_id,{recipient:{id:event.platform_user_id},message:{text:`For property details,
+${link}`}});
       return {processed:true,intake,reply:{sent:result.ok,status:result.status}};
     }
     if(!wantsWhatsApp&&!keywordMatch)return {processed:false,ignored:true};
