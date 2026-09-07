@@ -9,7 +9,9 @@ export const SOCIAL_KEYWORDS = [
   ['KOVILPALAYAM','Kovilpalayam','Telecaller 2'],
   ['ANNUR','Annur','Telecaller 2'],
   ['METTUPALAYAM','Mettupalayam','Telecaller 2'],
-  ['MALUMICHAMPATTI','Malumichampatti','Telecaller 1']
+  ['MALUMICHAMPATTI','Malumichampatti','Telecaller 1'],
+  ['IDIGARAI','Idigarai',null],
+  ['KEERANATHAM','Keeranatham',null]
 ];
 
 export const AREA_OPTIONS = [
@@ -21,7 +23,9 @@ export const AREA_OPTIONS = [
   ['KOVILPALAYAM','Kovilpalayam','Telecaller 2'],
   ['ANNUR','Annur','Telecaller 2'],
   ['METTUPALAYAM','Mettupalayam','Telecaller 2'],
-  ['MALUMICHAMPATTI','Malumichampatti','Telecaller 1']
+  ['MALUMICHAMPATTI','Malumichampatti','Telecaller 1'],
+  ['IDIGARAI','Idigarai',null],
+  ['KEERANATHAM','Keeranatham',null]
 ];
 
 const compact = value => String(value || '').toUpperCase().replace(/[^A-Z]/g,'');
