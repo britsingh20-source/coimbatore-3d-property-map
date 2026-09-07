@@ -1,0 +1,47 @@
+name: Apply concise social property reply
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/patch-social-reply.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shorten AREA property-details replies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('cloudflare/main-meta-webhooks.js')
+          s=p.read_text()
+          old1="const text=`For property details, choose your preferred area here: ${link}`;"
+          new1="const text=`For property details,\n${link}`;"
+          old2="message:{text:`For property details, choose your preferred area here: ${link}`}}"
+          new2="message:{text:`For property details,\n${link}`}}"
+          if old1 not in s:
+              raise SystemExit('AREA comment reply pattern not found')
+          if old2 not in s:
+              raise SystemExit('AREA DM reply pattern not found')
+          s=s.replace(old1,new1).replace(old2,new2)
+          p.write_text(s)
+          PY
+      - name: Commit concise reply
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- cloudflare/main-meta-webhooks.js; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '4189822+github-actions[bot]@users.noreply.github.com'
+          git add cloudflare/main-meta-webhooks.js
+          git commit -m 'Use concise property details social reply'
+          git pull --rebase origin main
+          git push origin HEAD:main
