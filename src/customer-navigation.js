@@ -36,6 +36,36 @@ function googleMapsDirectionsUrl(coordinates) {
   return "https://www.google.com/maps/dir/?api=1&destination=" + encodeURIComponent(lat + "," + lng);
 }
 
+function installSafeShare(property, mapsUrl) {
+  const shareButton = document.querySelector("#detail-content .share-property");
+  if (!shareButton || shareButton.dataset.customerLocationShare === "1") return;
+  shareButton.dataset.customerLocationShare = "1";
+
+  const propertyLink = location.origin + location.pathname + "?property=" + encodeURIComponent(property.id);
+  const shareText = [
+    property.title,
+    "Price: " + property.price,
+    "Customer Location: " + property.address,
+    mapsUrl ? "📍 Customer Location Map: " + mapsUrl : "",
+    property.instagramUrl ? "Instagram video: " + property.instagramUrl : "",
+    "Contact CoimbatoreVeedu Builders: 9003787621",
+    "Property details: " + propertyLink
+  ].filter(Boolean).join("\n");
+  const whatsappShare = "https://wa.me/?text=" + encodeURIComponent(shareText);
+
+  shareButton.onclick = async () => {
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: property.title, text: shareText });
+        return;
+      } catch (error) {
+        if (error?.name === "AbortError") return;
+      }
+    }
+    location.href = whatsappShare;
+  };
+}
+
 async function installNavigationAction() {
   const dialog = document.querySelector("#details");
   const actions = document.querySelector("#detail-content .property-actions");
@@ -54,25 +84,26 @@ async function installNavigationAction() {
 
   const note = document.createElement("p");
   note.className = "customer-navigation-note";
-  note.textContent = "Navigation opens the customer meeting location you selected. Contact us for the exact property site visit.";
+  note.textContent = "Navigation and Share Property use the customer location you selected. Contact us for the exact property site visit.";
   actions.insertAdjacentElement("afterend", note);
 
   try {
     const property = findPublicProperty(await getPublicCatalog(), identity);
     const coordinates = property?.coordinates;
     const url = Array.isArray(coordinates) && coordinates.length === 2 ? googleMapsDirectionsUrl(coordinates) : "";
-    if (!url) throw new Error("Customer location unavailable");
+    if (!property || !url) throw new Error("Customer location unavailable");
     button.href = url;
     button.target = "_blank";
     button.rel = "noopener";
     button.dataset.state = "ready";
     button.title = property.address ? "Navigate to " + property.address : "Navigate to customer meeting location";
+    installSafeShare(property, url);
   } catch (error) {
     button.dataset.state = "error";
     button.textContent = "📍 Location unavailable";
     button.removeAttribute("target");
     button.onclick = (event) => event.preventDefault();
-    note.textContent = "Customer navigation location is not available for this property yet. Please contact us for the meeting point.";
+    note.textContent = "Customer navigation location is not available for this property yet. Share Property will not expose the exact site location.";
     console.info("Customer navigation could not be prepared.", error);
   }
 }
