@@ -52,23 +52,27 @@ function openCustomerDestination(destination) {
     return;
   }
 
-  // On iPhone, opening the normal HTTPS directions URL can hand off to Google Maps
-  // without preserving the destination. Use the Google Maps app scheme first.
   const started = Date.now();
   window.location.href = googleMapsIosUrl(destination);
   window.setTimeout(() => {
-    // If Google Maps is not installed, the page remains active; fall back to the
-    // official Google Maps web directions URL with the same customer destination.
     if (document.visibilityState === "visible" && Date.now() - started < 1800) {
       window.location.href = webUrl;
     }
   }, 900);
 }
 
+function removeInternalLocationCopy() {
+  const root = document.querySelector("#detail-content");
+  if (!root) return;
+  root.querySelectorAll(".customer-navigation-note, .location-note").forEach((node) => node.remove());
+}
+
 async function prepareCustomerNavigation() {
   const dialog = document.querySelector("#details");
   const actions = document.querySelector("#detail-content .property-actions");
   if (!dialog?.open || !actions) return;
+
+  removeInternalLocationCopy();
 
   const identity = currentDetailsIdentity();
   if (!identity) return;
@@ -82,16 +86,7 @@ async function prepareCustomerNavigation() {
     actions.prepend(button);
   }
 
-  let note = document.querySelector("#detail-content .customer-navigation-note");
-  if (!note) {
-    note = document.createElement("p");
-    note.className = "customer-navigation-note";
-    actions.insertAdjacentElement("afterend", note);
-  }
-
   try {
-    // Intentionally call the public catalog WITHOUT an Authorization header.
-    // This guarantees that Navigate can only receive customer-safe coordinates.
     const property = findPublicProperty(await getPublicCatalog(), identity);
     const destination = destinationValues(property?.coordinates);
     if (!property || !destination) throw new Error("Customer location unavailable");
@@ -106,19 +101,28 @@ async function prepareCustomerNavigation() {
       event.preventDefault();
       openCustomerDestination(destination);
     };
-    note.textContent = "Navigate opens the customer location you selected. The exact property location remains private.";
   } catch (error) {
     button.href = "#";
     button.dataset.state = "error";
     button.textContent = "📍 Location unavailable";
     button.removeAttribute("target");
     button.onclick = (event) => event.preventDefault();
-    note.textContent = "Customer navigation location is not available for this property yet. Please update the Customer Location in the property editor.";
     console.info("Customer navigation could not be prepared.", error);
   }
+
+  removeInternalLocationCopy();
 }
 
-const observer = new MutationObserver(() => window.setTimeout(prepareCustomerNavigation, 0));
+const observer = new MutationObserver(() => {
+  removeInternalLocationCopy();
+  window.setTimeout(prepareCustomerNavigation, 0);
+});
 observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["open"] });
-document.addEventListener("click", () => window.setTimeout(prepareCustomerNavigation, 40), true);
-window.addEventListener("pageshow", () => window.setTimeout(prepareCustomerNavigation, 100));
+document.addEventListener("click", () => {
+  removeInternalLocationCopy();
+  window.setTimeout(prepareCustomerNavigation, 40);
+}, true);
+window.addEventListener("pageshow", () => {
+  removeInternalLocationCopy();
+  window.setTimeout(prepareCustomerNavigation, 100);
+});
