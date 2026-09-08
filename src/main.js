@@ -127,7 +127,9 @@ function openDetails(property) {
   const tour = property.tour?.length ? property.tour : defaultTour;
   const customerAddress = property.publicAddress || property.address;
   const propertyLink = location.origin + location.pathname + "?property=" + encodeURIComponent(property.id);
-  const whatsappText = encodeURIComponent("Hello, I am interested in " + property.title + ". Price: " + property.price + ". Area: " + customerAddress + "." + (property.instagramUrl ? " Instagram video: " + property.instagramUrl + "." : "") + " Property details: " + propertyLink + " Please arrange a guided site visit.");
+  const enquiryText = encodeURIComponent("Hello CoimbatoreVeedu Builders, I am interested in " + property.title + ". Price: " + property.price + ". Area: " + customerAddress + ". Please arrange a guided site visit. Property details: " + propertyLink);
+  const shareText = property.title + "\nPrice: " + property.price + "\nArea: " + customerAddress + (property.instagramUrl ? "\nInstagram video: " + property.instagramUrl : "") + "\nContact CoimbatoreVeedu Builders: 9003787621";
+  const whatsappShare = "https://wa.me/?text=" + encodeURIComponent(shareText + "\nProperty details: " + propertyLink);
   const instagramCode = String(property.instagramUrl || "").match(/instagram\.com\/(?:reel|p)\/([^/?#]+)/i)?.[1] || "";
   const instagramVideo = instagramCode ? '<section class="instagram-video"><div><b>Property video</b><a href="' + property.instagramUrl + '" target="_blank" rel="noopener">Open in Instagram ↗</a></div><iframe src="https://www.instagram.com/reel/' + encodeURIComponent(instagramCode) + '/embed" title="Instagram property video" loading="lazy" allowfullscreen></iframe></section>' : '';
   document.querySelector("#detail-content").innerHTML = [
@@ -143,7 +145,7 @@ function openDetails(property) {
     '</b></p><p><small>Approval</small><b>', property.approval,
     '</b></p><p><small>Approach road</small><b>', property.road,
     '</b></p></div><ul>', property.features.map((feature) => '<li>✓ ' + feature + '</li>').join(""),
-    '</ul><a class="enquire" href="https://wa.me/919003787621?text=', whatsappText, '" target="_blank" rel="noopener">Share / enquire on WhatsApp →</a>',
+    '</ul><div class="property-actions"><button class="share-property" type="button">Share Property</button><a class="enquire" href="https://wa.me/919003787621?text=', enquiryText, '" target="_blank" rel="noopener">Enquire / Book Visit</a></div>',
     '<p class="location-note">', property.exactLocation ? 'Staff view: exact site location is visible after login.' : 'Customer privacy view: this pin is approximately 1 km away from the site. The owner contact and exact location are protected. Contact us for a guided visit.', '</p></div>'
   ].join("");
   document.querySelector("#details").showModal();
@@ -161,6 +163,17 @@ function openDetails(property) {
   document.querySelectorAll("[data-full-image]").forEach((image) => {
     image.onclick = () => openPhotoViewer(image.dataset.fullImage, image.alt);
   });
+  document.querySelector(".share-property").onclick = async () => {
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: property.title, text: shareText, url: propertyLink });
+        return;
+      } catch (error) {
+        if (error?.name === "AbortError") return;
+      }
+    }
+    location.href = whatsappShare;
+  };
 }
 
 const photoViewer = document.querySelector("#photo-viewer");
