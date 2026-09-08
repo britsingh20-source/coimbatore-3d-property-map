@@ -4,7 +4,7 @@ export const properties = [
   {
     id: "jks-plot-01",
     title: "JKS Nagar Residential Plot",
-    address: "JKS Nagar, Somayampalayam",
+    address: "Somayampalayam area, Coimbatore",
     type: "Plot",
     price: "₹38 L",
     size: "4.2 cents",
@@ -13,13 +13,15 @@ export const properties = [
     facing: "North",
     approval: "DTCP approved",
     road: "30 ft road",
-    coordinates: [76.8894, 11.0476],
+    coordinates: [76.898365, 11.045077],
+    exactLocation: false,
+    locationAccuracy: "approximate_1km",
     features: ["Corner plot", "Clear title", "Water connection"]
   },
   {
     id: "bom-villa-01",
     title: "Bommanampalayam 3 BHK Villa",
-    address: "Bommanampalayam, Vadavalli",
+    address: "Bommanampalayam area, Coimbatore",
     type: "3 BHK Villa",
     price: "₹72 L",
     size: "1,650 sq.ft.",
@@ -28,13 +30,15 @@ export const properties = [
     facing: "East",
     approval: "Plan approved",
     road: "30 ft road",
-    coordinates: [76.8819, 11.0312],
+    coordinates: [76.875727, 11.024231],
+    exactLocation: false,
+    locationAccuracy: "approximate_1km",
     features: ["Covered parking", "Modular kitchen", "3 attached baths"]
   },
   {
     id: "vada-villa-01",
     title: "Vadavalli 2 BHK Villa",
-    address: "Vadavalli, Coimbatore",
+    address: "Vadavalli area, Coimbatore",
     type: "2 BHK Villa",
     price: "₹58 L",
     size: "1,180 sq.ft.",
@@ -43,13 +47,15 @@ export const properties = [
     facing: "North",
     approval: "Plan approved",
     road: "30 ft road",
-    coordinates: [76.9028, 11.0255],
+    coordinates: [76.91193, 11.02503],
+    exactLocation: false,
+    locationAccuracy: "approximate_1km",
     features: ["Ready to move", "Covered parking", "Near bus stop"]
   },
   {
     id: "maru-plot-01",
     title: "Marudhamalai Road Plot",
-    address: "Marudhamalai Road, Vadavalli",
+    address: "Marudhamalai Road area, Coimbatore",
     type: "Plot",
     price: "₹32 L",
     size: "3.5 cents",
@@ -58,7 +64,9 @@ export const properties = [
     facing: "East",
     approval: "DTCP approved",
     road: "33 ft road",
-    coordinates: [76.8898, 11.0185],
+    coordinates: [76.89854, 11.021454],
+    exactLocation: false,
+    locationAccuracy: "approximate_1km",
     features: ["Fenced site", "EB available", "Residential area"]
   }
 ];

@@ -9,9 +9,11 @@ const API_BASE = window.LEAD_API_BASE || "";
 const absoluteMediaUrl = (url) => url?.startsWith("/api/") ? API_BASE + url : url;
 const startupToken = localStorage.getItem("crm-telecaller-session-token") || "";
 const catalogCacheKey = startupToken ? "published-property-catalog-internal" : "published-property-catalog-public";
+const catalogCache = startupToken ? sessionStorage : localStorage;
 try {
   localStorage.removeItem("published-property-catalog");
-  const cached = JSON.parse(localStorage.getItem(catalogCacheKey) || "null");
+  localStorage.removeItem("published-property-catalog-internal");
+  const cached = JSON.parse(catalogCache.getItem(catalogCacheKey) || "null");
   if (Array.isArray(cached) && cached.length) properties.splice(0, properties.length, ...cached);
 } catch (error) {
   console.info("Could not read the cached property catalog.", error);
@@ -20,11 +22,11 @@ if (!startupToken) properties.forEach((property) => {
   if (property.exactLocation === false) return;
   let hash = 0;
   for (const char of String(property.id)) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
-  const distance = 450 + (hash % 101), bearing = (hash % 360) * Math.PI / 180;
+  const distance = 950 + (hash % 101), bearing = (hash % 360) * Math.PI / 180;
   const [lng, lat] = property.coordinates;
   property.coordinates = [lng + (distance * Math.sin(bearing)) / (111320 * Math.max(.2, Math.cos(lat * Math.PI / 180))), lat + (distance * Math.cos(bearing)) / 111320];
   property.exactLocation = false;
-  property.locationAccuracy = "approximate_500m";
+  property.locationAccuracy = "approximate_1km";
 });
 fetch(API_BASE + "/api/properties", { headers: startupToken ? { Authorization: "Bearer " + startupToken } : {} }).then((response) => response.ok ? response.json() : null).then((data) => {
   if (!Array.isArray(data?.properties) || !data.properties.length) return;
@@ -33,8 +35,8 @@ fetch(API_BASE + "/api/properties", { headers: startupToken ? { Authorization: "
     tour: (property.tour || []).map((photo) => ({ ...photo, url: absoluteMediaUrl(photo.url) }))
   }));
   const serialized = JSON.stringify(catalog);
-  if (localStorage.getItem(catalogCacheKey) !== serialized) {
-    localStorage.setItem(catalogCacheKey, serialized);
+  if (catalogCache.getItem(catalogCacheKey) !== serialized) {
+    catalogCache.setItem(catalogCacheKey, serialized);
     window.location.reload();
   }
 }).catch((error) => console.info("Published property catalog is temporarily unavailable.", error));
@@ -85,7 +87,7 @@ document.querySelector("#app").innerHTML = [
           properties.map((property) => '<article><div class="property-mini-icon">' + (property.type === "Plot" ? "▱" : "⌂") + '</div><div><b>' + property.title + '</b><small>' + property.address + ' · ' + property.price + '</small></div><button data-edit-property="' + property.id + '">Edit ✎</button></article>').join("") +
         '</div></section>',
         '<section id="admin-editor" class="admin-section"><div class="admin-heading"><div><small>PROPERTY EDITOR</small><h2 id="editor-title">Update property</h2></div><button class="editor-back" data-admin-action="overview">← Back</button></div>',
-          '<form id="property-editor-form"><div class="admin-form-grid"><label>Property title<input name="title" required placeholder="Example: Vadavalli 3 BHK Villa"></label><label>Property type<select name="type"><option>Plot</option><option>Villa</option></select></label><label class="villa-only">Bedrooms<input name="bedrooms" placeholder="3 BHK"></label><label>Location<input name="address" required placeholder="Area, locality, Coimbatore"></label><label>Price<input name="price" required placeholder="₹58 L"></label><label>Land area<input name="landArea" placeholder="4.2 cents · 1,830 sq.ft."></label><label class="villa-only">Building area<input name="builtUpArea" placeholder="1,650 sq.ft."></label><label>Facing<input name="facing" placeholder="North"></label><label>Approval<input name="approval" placeholder="DTCP / Plan approved"></label><label>Road width<input name="road" placeholder="30 ft road"></label><label>Coordinates<input name="coordinates" required placeholder="Latitude, Longitude from Google Maps"></label><label class="form-wide">Amenities / features<input name="features" placeholder="Park, Water, Street lights (comma separated)"></label></div>',
+          '<form id="property-editor-form"><div class="admin-form-grid"><label>Property title<input name="title" required placeholder="Example: Vadavalli 3 BHK Villa"></label><label>Property type<select name="type"><option>Plot</option><option>Villa</option></select></label><label class="villa-only">Bedrooms<input name="bedrooms" placeholder="3 BHK"></label><label>Exact site location<input name="address" required placeholder="Full private location / landmark"></label><label>Price<input name="price" required placeholder="₹58 L"></label><label>Land area<input name="landArea" placeholder="4.2 cents · 1,830 sq.ft."></label><label class="villa-only">Building area<input name="builtUpArea" placeholder="1,650 sq.ft."></label><label>Facing<input name="facing" placeholder="North"></label><label>Approval<input name="approval" placeholder="DTCP / Plan approved"></label><label>Road width<input name="road" placeholder="30 ft road"></label><label>Exact coordinates<input name="coordinates" required placeholder="Latitude, Longitude from Google Maps"></label><label class="form-wide">Instagram Reel link<input name="instagramUrl" inputmode="url" placeholder="https://www.instagram.com/reel/..."></label><label class="form-wide">Amenities / features<input name="features" placeholder="Park, Water, Street lights (comma separated)"></label></div><fieldset class="customer-location-fields"><legend>Customer-safe location</legend><p>Customers receive only this area label and an approximate pin. Leave the pin blank to place it automatically about 1 km away from the exact site.</p><div class="admin-form-grid"><label>Customer area label<input name="publicAddress" placeholder="Example: Edappadi area, Coimbatore"></label><label>Customer map pin (optional)<input name="publicCoordinates" placeholder="Latitude, Longitude about 1 km away"></label></div></fieldset>',
             '<fieldset id="director-contact-fields" class="director-contact-fields" hidden><legend>Director-only contacts</legend><p>These numbers are protected and are never shown to customers, telecallers, Managers or Administrators.</p><div class="admin-form-grid"><label>Property owner name<input name="owner_name" placeholder="Owner name"></label><label>Property owner number<input name="owner_phone" inputmode="tel" placeholder="+91 98765 43210"></label><label>Property manager name<input name="manager_name" placeholder="Manager name"></label><label>Property manager number<input name="manager_phone" inputmode="tel" placeholder="+91 98765 43210"></label><label>Builder name<input name="builder_name" placeholder="Builder name"></label><label>Builder number<input name="builder_phone" inputmode="tel" placeholder="+91 98765 43210"></label></div></fieldset>',
             '<div class="admin-media"><div><b>Property gallery</b><small id="media-help">Front Poster / Rate Card is required. Tap any box to choose from your gallery.</small></div><div id="media-slots" class="media-slots"></div></div>',
             '<p id="admin-save-notice" hidden></p><div class="editor-actions"><button type="button" data-admin-action="overview">Cancel</button><button id="property-save-button" type="submit">Save Property</button></div>',
@@ -123,12 +125,16 @@ function tourSlide(photo, index) {
 
 function openDetails(property) {
   const tour = property.tour?.length ? property.tour : defaultTour;
-  const whatsappText = encodeURIComponent("Hello, I would like to schedule a site visit for " + property.title + " at " + property.address + ". Price: " + property.price + ".");
+  const customerAddress = property.publicAddress || property.address;
+  const propertyLink = location.origin + location.pathname + "?property=" + encodeURIComponent(property.id);
+  const whatsappText = encodeURIComponent("Hello, I am interested in " + property.title + ". Price: " + property.price + ". Area: " + customerAddress + "." + (property.instagramUrl ? " Instagram video: " + property.instagramUrl + "." : "") + " Property details: " + propertyLink + " Please arrange a guided site visit.");
+  const instagramCode = String(property.instagramUrl || "").match(/instagram\.com\/(?:reel|p)\/([^/?#]+)/i)?.[1] || "";
+  const instagramVideo = instagramCode ? '<section class="instagram-video"><div><b>Property video</b><a href="' + property.instagramUrl + '" target="_blank" rel="noopener">Open in Instagram ↗</a></div><iframe src="https://www.instagram.com/reel/' + encodeURIComponent(instagramCode) + '/embed" title="Instagram property video" loading="lazy" allowfullscreen></iframe></section>' : '';
   document.querySelector("#detail-content").innerHTML = [
     '<section class="hologram-tour"><div class="holo-title"><span>◈ HOLOGRAM TOUR</span><small>Swipe through property spaces</small></div>',
     '<div class="holo-stage">', tour.map(tourSlide).join(""),
     '<button class="tour-arrow previous" aria-label="Previous image">‹</button><button class="tour-arrow next" aria-label="Next image">›</button></div>',
-    '<div class="tour-thumbs">', tour.map((photo, index) => '<button class="' + (index === 0 ? "active" : "") + '" data-tour="' + index + '">' + photo.label + '</button>').join(""), '</div></section>',
+    '<div class="tour-thumbs">', tour.map((photo, index) => '<button class="' + (index === 0 ? "active" : "") + '" data-tour="' + index + '">' + photo.label + '</button>').join(""), '</div></section>', instagramVideo,
     '<div class="detail-head"><span>', property.type, '</span><strong>', property.price,
     '</strong><small>⌖ ', property.address, '</small></div><div class="detail-body"><h2>',
     property.title, '</h2><div class="specs"><p><small>Land area</small><b>', property.landArea || property.size,
@@ -137,8 +143,8 @@ function openDetails(property) {
     '</b></p><p><small>Approval</small><b>', property.approval,
     '</b></p><p><small>Approach road</small><b>', property.road,
     '</b></p></div><ul>', property.features.map((feature) => '<li>✓ ' + feature + '</li>').join(""),
-    '</ul><a class="enquire" href="https://wa.me/919003787621?text=', whatsappText, '" target="_blank" rel="noopener">Schedule a site visit on WhatsApp →</a>',
-    '<p class="location-note">', property.exactLocation ? 'Exact site location is visible to authorised staff.' : 'Customer privacy view: this pin shows only the approximate locality within about 500 metres. Contact us for a guided site visit.', '</p></div>'
+    '</ul><a class="enquire" href="https://wa.me/919003787621?text=', whatsappText, '" target="_blank" rel="noopener">Share / enquire on WhatsApp →</a>',
+    '<p class="location-note">', property.exactLocation ? 'Staff view: exact site location is visible after login.' : 'Customer privacy view: this pin is approximately 1 km away from the site. The owner contact and exact location are protected. Contact us for a guided visit.', '</p></div>'
   ].join("");
   document.querySelector("#details").showModal();
   let currentSlide = 0;
@@ -554,12 +560,14 @@ document.querySelectorAll("[data-edit-property]").forEach((button) => {
     selectedMedia.clear();
     editingPropertyId = property.id;
     existingTour = property.tour || [];
-    ["title", "bedrooms", "address", "price", "landArea", "builtUpArea", "facing", "approval", "road"].forEach((field) => {
+    ["title", "bedrooms", "address", "price", "landArea", "builtUpArea", "facing", "approval", "road", "instagramUrl"].forEach((field) => {
       if (editorForm.elements[field]) editorForm.elements[field].value = property[field] || "";
     });
     editorForm.elements.type.value = property.type === "Plot" ? "Plot" : "Villa";
     editorForm.elements.features.value = (property.features || []).join(", ");
     editorForm.elements.coordinates.value = property.coordinates[1] + ", " + property.coordinates[0];
+    editorForm.elements.publicAddress.value = property.publicAddress || "";
+    editorForm.elements.publicCoordinates.value = property.publicCoordinates ? property.publicCoordinates[1] + ", " + property.publicCoordinates[0] : "";
     document.querySelector("#editor-title").textContent = "Edit " + property.title;
     document.querySelector("#admin-save-notice").hidden = true;
     renderMediaSlots();
@@ -578,6 +586,20 @@ document.querySelectorAll("[data-edit-property]").forEach((button) => {
     showAdminSection("editor");
   };
 });
+window.addEventListener("crm-session-login", () => {
+  sessionStorage.removeItem("published-property-catalog-internal");
+  window.location.reload();
+});
+window.addEventListener("crm-session-logout", () => {
+  sessionStorage.removeItem("published-property-catalog-internal");
+  localStorage.removeItem("published-property-catalog-public");
+  window.location.reload();
+});
+window.setTimeout(() => {
+  const requestedProperty = new URLSearchParams(location.search).get("property");
+  const property = properties.find((item) => item.id === requestedProperty);
+  if (property && !document.querySelector("#details").open) openDetails(property);
+}, 900);
 editorForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const notice = document.querySelector("#admin-save-notice");

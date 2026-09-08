@@ -31,13 +31,35 @@ function storedBytes(value){
 }
 function approximateCoordinates(property){
   let hash=0;for(const char of property.id)hash=(hash*31+char.charCodeAt(0))>>>0;
-  const distance=450+(hash%101),bearing=(hash%360)*Math.PI/180,lat=Number(property.latitude),lng=Number(property.longitude);
+  const distance=950+(hash%101),bearing=(hash%360)*Math.PI/180,lat=Number(property.latitude),lng=Number(property.longitude);
   return [lng+(distance*Math.sin(bearing))/(111320*Math.max(.2,Math.cos(lat*Math.PI/180))),lat+(distance*Math.cos(bearing))/111320];
+}
+function publicAddress(value){
+  const parts=clean(value).split(",").map(x=>x.trim()).filter(Boolean).filter(x=>!/^tamil nadu$/i.test(x)&&!/^india$/i.test(x)&&!/^coimbatore(?: district)?$/i.test(x));
+  const area=parts.at(-1)||"Coimbatore";
+  return `${area} area, Coimbatore`;
+}
+function coordinateDistanceMetres(a,b){
+  const toRad=value=>value*Math.PI/180,lat1=toRad(a[1]),lat2=toRad(b[1]),dLat=lat2-lat1,dLng=toRad(b[0]-a[0]);
+  const h=Math.sin(dLat/2)**2+Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLng/2)**2;
+  return 6371000*2*Math.atan2(Math.sqrt(h),Math.sqrt(1-h));
+}
+function instagramUrl(value){
+  const raw=clean(value);if(!raw)return "";
+  try{const url=new URL(raw);if(!/(^|\.)instagram\.com$/i.test(url.hostname)||!/^\/(reel|p)\/[^/]+\/?/.test(url.pathname))return null;return `https://www.instagram.com${url.pathname.replace(/\/+$/,"")}/`;}
+  catch{return null;}
 }
 async function listProperties(env,exact=false){
   const properties=(await env.DB.prepare("SELECT * FROM properties WHERE active=1 ORDER BY updated_at DESC").all()).results||[];
   const images=(await env.DB.prepare("SELECT property_id,slot,object_key,original_name FROM property_images ORDER BY id").all()).results||[];
-  return properties.map(p=>({id:p.id,title:p.title,type:p.property_kind,bedrooms:p.bedrooms||"",address:p.address,price:p.price,landArea:p.land_area||"",builtUpArea:p.built_up_area||"",facing:p.facing||"",approval:p.approval||"",road:p.road||"",coordinates:exact?[p.longitude,p.latitude]:approximateCoordinates(p),exactLocation:exact,locationAccuracy:exact?"exact":"approximate_500m",features:JSON.parse(p.features_json||"[]"),tour:images.filter(i=>i.property_id===p.id).map(i=>({label:i.slot,url:`/api/property-media/${encodeURIComponent(i.object_key)}?v=2`,alt:i.original_name||`${i.slot} image`}))}));
+  return properties.map(p=>{
+    const fallbackPublic=approximateCoordinates(p);
+    const hasPublicCoordinates=p.public_longitude!==null&&p.public_longitude!==undefined&&p.public_latitude!==null&&p.public_latitude!==undefined&&Number.isFinite(Number(p.public_longitude))&&Number.isFinite(Number(p.public_latitude));
+    const publicCoordinates=hasPublicCoordinates?[Number(p.public_longitude),Number(p.public_latitude)]:fallbackPublic;
+    const shared={id:p.id,title:p.title,type:p.property_kind,bedrooms:p.bedrooms||"",price:p.price,landArea:p.land_area||"",builtUpArea:p.built_up_area||"",facing:p.facing||"",approval:p.approval||"",road:p.road||"",instagramUrl:p.instagram_url||"",features:JSON.parse(p.features_json||"[]"),tour:images.filter(i=>i.property_id===p.id).map(i=>({label:i.slot,url:`/api/property-media/${encodeURIComponent(i.object_key)}?v=2`,alt:i.original_name||`${i.slot} image`}))};
+    if(!exact)return {...shared,address:clean(p.public_address)||publicAddress(p.address),coordinates:publicCoordinates,exactLocation:false,locationAccuracy:"approximate_1km"};
+    return {...shared,address:p.address,coordinates:[p.longitude,p.latitude],exactLocation:true,locationAccuracy:"exact",publicAddress:clean(p.public_address)||publicAddress(p.address),publicCoordinates};
+  });
 }
 async function saveProperty(request,env){
   const session=await editorSession(request,env);if(!session)return json({error:"Director or Administrator session required"},401,env);
@@ -45,13 +67,21 @@ async function saveProperty(request,env){
   if(!["Plot","Villa"].includes(kind))return json({error:"Property type must be Plot or Villa"},422,env);
   const title=clean(form.get("title")),address=clean(form.get("address")),price=clean(form.get("price")),coordinates=parseCoordinates(form.get("coordinates"));
   if(!title||!address||!price||!coordinates)return json({error:"Title, location, price and valid Longitude, Latitude are required"},422,env);
+  const customerAddress=clean(form.get("publicAddress"))||publicAddress(address),requestedPublicCoordinates=parseCoordinates(form.get("publicCoordinates"));
+  const generatedPublicCoordinates=approximateCoordinates({id:clean(form.get("id"))||title,longitude:coordinates[0],latitude:coordinates[1]});
+  const publicCoordinates=requestedPublicCoordinates||generatedPublicCoordinates;
+  if(clean(form.get("publicCoordinates"))&&!requestedPublicCoordinates)return json({error:"Customer map pin must contain valid Latitude, Longitude coordinates"},422,env);
+  const publicDistance=coordinateDistanceMetres(coordinates,publicCoordinates);
+  if(publicDistance<750||publicDistance>1500)return json({error:"Customer map pin must be 750 metres to 1.5 km from the exact site"},422,env);
+  const socialVideo=instagramUrl(form.get("instagramUrl"));
+  if(socialVideo===null)return json({error:"Instagram video must be a valid instagram.com/reel or instagram.com/p link"},422,env);
   const id=clean(form.get("id"))||`${slug(title)}-${Date.now().toString(36)}`;
   const existing=await env.DB.prepare("SELECT id FROM properties WHERE id=?").bind(id).first();
   const existingPoster=existing&&await env.DB.prepare("SELECT 1 ok FROM property_images WHERE property_id=? AND slot='Front Poster'").bind(id).first();
   const incomingPoster=form.get("image_Front Poster");
   if(!existingPoster&&(!(incomingPoster instanceof File)||!incomingPoster.size))return json({error:"A Front Poster image is required"},422,env);
-  await env.DB.prepare(`INSERT INTO properties(id,title,property_kind,bedrooms,address,price,land_area,built_up_area,facing,approval,road,longitude,latitude,features_json,created_by)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,property_kind=excluded.property_kind,bedrooms=excluded.bedrooms,address=excluded.address,price=excluded.price,land_area=excluded.land_area,built_up_area=excluded.built_up_area,facing=excluded.facing,approval=excluded.approval,road=excluded.road,longitude=excluded.longitude,latitude=excluded.latitude,features_json=excluded.features_json,active=1,updated_at=CURRENT_TIMESTAMP`).bind(id,title,kind,clean(form.get("bedrooms"))||null,address,price,clean(form.get("landArea"))||null,clean(form.get("builtUpArea"))||null,clean(form.get("facing"))||null,clean(form.get("approval"))||null,clean(form.get("road"))||null,coordinates[0],coordinates[1],JSON.stringify(clean(form.get("features")).split(",").map(x=>x.trim()).filter(Boolean)),session.user_label).run();
+  await env.DB.prepare(`INSERT INTO properties(id,title,property_kind,bedrooms,address,public_address,price,land_area,built_up_area,facing,approval,road,longitude,latitude,public_longitude,public_latitude,instagram_url,features_json,created_by)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,property_kind=excluded.property_kind,bedrooms=excluded.bedrooms,address=excluded.address,public_address=excluded.public_address,price=excluded.price,land_area=excluded.land_area,built_up_area=excluded.built_up_area,facing=excluded.facing,approval=excluded.approval,road=excluded.road,longitude=excluded.longitude,latitude=excluded.latitude,public_longitude=excluded.public_longitude,public_latitude=excluded.public_latitude,instagram_url=excluded.instagram_url,features_json=excluded.features_json,active=1,updated_at=CURRENT_TIMESTAMP`).bind(id,title,kind,clean(form.get("bedrooms"))||null,address,customerAddress,price,clean(form.get("landArea"))||null,clean(form.get("builtUpArea"))||null,clean(form.get("facing"))||null,clean(form.get("approval"))||null,clean(form.get("road"))||null,coordinates[0],coordinates[1],publicCoordinates[0],publicCoordinates[1],socialVideo||null,JSON.stringify(clean(form.get("features")).split(",").map(x=>x.trim()).filter(Boolean)),session.user_label).run();
   let uploaded=0;
   for(const [key,value] of form.entries()){
     if(!key.startsWith("image_")||!(value instanceof File)||!value.size)continue;

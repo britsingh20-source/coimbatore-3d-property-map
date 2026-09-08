@@ -92,6 +92,19 @@ jobs:
           npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/primary_working_areas.sql
           npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/daily_lead_import.sql
           npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/property_catalog.sql
+          ensure_property_column() {
+            COL="$1"; DEF="$2"
+            if npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --command "SELECT $COL FROM properties LIMIT 1" >/dev/null 2>&1; then
+              echo "properties.$COL already exists"
+            else
+              echo "Adding properties.$COL"
+              npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --command "ALTER TABLE properties ADD COLUMN $COL $DEF"
+            fi
+          }
+          ensure_property_column public_address "TEXT"
+          ensure_property_column public_longitude "REAL"
+          ensure_property_column public_latitude "REAL"
+          ensure_property_column instagram_url "TEXT"
           npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --file cloudflare/social_leads.sql
           npx wrangler d1 execute "$DB_NAME" --remote --config wrangler.crm.toml --command "ALTER TABLE property_images ADD COLUMN image_base64 TEXT" || true
       - name: Migrate existing session table

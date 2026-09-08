@@ -73,6 +73,16 @@ jobs:
         run: |
           curl -fsS "$API_URL/api/areas" | tee /tmp/areas.json
           jq -e '.areas | type == "array"' /tmp/areas.json >/dev/null
+      - name: Verify customer property privacy boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsS "$API_URL/api/properties" > /tmp/public-properties.json
+          jq -e '.properties | type == "array"' /tmp/public-properties.json >/dev/null
+          jq -e 'all(.properties[]; .exactLocation == false and .locationAccuracy == "approximate_1km" and (has("publicAddress") | not) and (has("publicCoordinates") | not))' /tmp/public-properties.json >/dev/null
+          CONTACT_CODE=$(curl -sS -o /tmp/public-contacts.json -w '%{http_code}' "$API_URL/api/properties/privacy-probe/contacts")
+          test "$CONTACT_CODE" = "403"
+          jq -e '.error == "Director session required"' /tmp/public-contacts.json >/dev/null
       - name: Verify all six staff logins, sessions and telecaller batches
         shell: bash
         run: |
