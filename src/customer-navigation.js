@@ -30,11 +30,39 @@ function findPublicProperty(catalog, identity) {
     || null;
 }
 
-function googleMapsDirectionsUrl(coordinates) {
+function destinationValues(coordinates) {
   const [lng, lat] = (coordinates || []).map(Number);
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return "";
-  // maps.google.com daddr is reliable on iPhone and opens with the destination pre-filled.
-  return "https://maps.google.com/maps?daddr=" + encodeURIComponent(lat + "," + lng) + "&dirflg=d";
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return { lat, lng, value: lat + "," + lng };
+}
+
+function googleMapsWebUrl(destination) {
+  return "https://www.google.com/maps/dir/?api=1&destination=" + encodeURIComponent(destination.value) + "&travelmode=driving";
+}
+
+function googleMapsIosUrl(destination) {
+  return "comgooglemaps://?daddr=" + encodeURIComponent(destination.value) + "&directionsmode=driving";
+}
+
+function openCustomerDestination(destination) {
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const webUrl = googleMapsWebUrl(destination);
+  if (!isIOS) {
+    window.open(webUrl, "_blank", "noopener");
+    return;
+  }
+
+  // On iPhone, opening the normal HTTPS directions URL can hand off to Google Maps
+  // without preserving the destination. Use the Google Maps app scheme first.
+  const started = Date.now();
+  window.location.href = googleMapsIosUrl(destination);
+  window.setTimeout(() => {
+    // If Google Maps is not installed, the page remains active; fall back to the
+    // official Google Maps web directions URL with the same customer destination.
+    if (document.visibilityState === "visible" && Date.now() - started < 1800) {
+      window.location.href = webUrl;
+    }
+  }, 900);
 }
 
 async function prepareCustomerNavigation() {
@@ -65,16 +93,19 @@ async function prepareCustomerNavigation() {
     // Intentionally call the public catalog WITHOUT an Authorization header.
     // This guarantees that Navigate can only receive customer-safe coordinates.
     const property = findPublicProperty(await getPublicCatalog(), identity);
-    const coordinates = property?.coordinates;
-    const url = Array.isArray(coordinates) && coordinates.length === 2 ? googleMapsDirectionsUrl(coordinates) : "";
-    if (!property || !url) throw new Error("Customer location unavailable");
+    const destination = destinationValues(property?.coordinates);
+    if (!property || !destination) throw new Error("Customer location unavailable");
 
-    button.href = url;
-    button.target = "_blank";
-    button.rel = "noopener";
+    button.href = googleMapsWebUrl(destination);
+    button.removeAttribute("target");
+    button.removeAttribute("rel");
     button.dataset.state = "ready";
     button.textContent = "📍 Navigate";
     button.title = property.address ? "Navigate to " + property.address : "Navigate to customer meeting location";
+    button.onclick = (event) => {
+      event.preventDefault();
+      openCustomerDestination(destination);
+    };
     note.textContent = "Navigate opens the customer location you selected. The exact property location remains private.";
   } catch (error) {
     button.href = "#";
