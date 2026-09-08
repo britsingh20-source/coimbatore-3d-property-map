@@ -39,11 +39,6 @@ function publicAddress(value){
   const area=parts.at(-1)||"Coimbatore";
   return `${area} area, Coimbatore`;
 }
-function coordinateDistanceMetres(a,b){
-  const toRad=value=>value*Math.PI/180,lat1=toRad(a[1]),lat2=toRad(b[1]),dLat=lat2-lat1,dLng=toRad(b[0]-a[0]);
-  const h=Math.sin(dLat/2)**2+Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLng/2)**2;
-  return 6371000*2*Math.atan2(Math.sqrt(h),Math.sqrt(1-h));
-}
 function instagramUrl(value){
   const raw=clean(value);if(!raw)return "";
   try{const url=new URL(raw);if(!/(^|\.)instagram\.com$/i.test(url.hostname)||!/^\/(reel|p)\/[^/]+\/?/.test(url.pathname))return null;return `https://www.instagram.com${url.pathname.replace(/\/+$/,"")}/`;}
@@ -57,7 +52,7 @@ async function listProperties(env,exact=false){
     const hasPublicCoordinates=p.public_longitude!==null&&p.public_longitude!==undefined&&p.public_latitude!==null&&p.public_latitude!==undefined&&Number.isFinite(Number(p.public_longitude))&&Number.isFinite(Number(p.public_latitude));
     const publicCoordinates=hasPublicCoordinates?[Number(p.public_longitude),Number(p.public_latitude)]:fallbackPublic;
     const shared={id:p.id,title:p.title,type:p.property_kind,bedrooms:p.bedrooms||"",price:p.price,landArea:p.land_area||"",builtUpArea:p.built_up_area||"",facing:p.facing||"",approval:p.approval||"",road:p.road||"",instagramUrl:p.instagram_url||"",features:JSON.parse(p.features_json||"[]"),tour:images.filter(i=>i.property_id===p.id).map(i=>({label:i.slot,url:`/api/property-media/${encodeURIComponent(i.object_key)}?v=2`,alt:i.original_name||`${i.slot} image`}))};
-    if(!exact)return {...shared,address:clean(p.public_address)||publicAddress(p.address),coordinates:publicCoordinates,exactLocation:false,locationAccuracy:"approximate_1km"};
+    if(!exact)return {...shared,address:clean(p.public_address)||publicAddress(p.address),coordinates:publicCoordinates,exactLocation:false,locationAccuracy:hasPublicCoordinates?"customer_defined":"legacy_approximate"};
     return {...shared,address:p.address,coordinates:[p.longitude,p.latitude],exactLocation:true,locationAccuracy:"exact",publicAddress:clean(p.public_address)||publicAddress(p.address),publicCoordinates};
   });
 }
@@ -66,13 +61,11 @@ async function saveProperty(request,env){
   const form=await request.formData(),kind=clean(form.get("type"));
   if(!["Plot","Villa"].includes(kind))return json({error:"Property type must be Plot or Villa"},422,env);
   const title=clean(form.get("title")),address=clean(form.get("address")),price=clean(form.get("price")),coordinates=parseCoordinates(form.get("coordinates"));
-  if(!title||!address||!price||!coordinates)return json({error:"Title, location, price and valid Longitude, Latitude are required"},422,env);
-  const customerAddress=clean(form.get("publicAddress"))||publicAddress(address),requestedPublicCoordinates=parseCoordinates(form.get("publicCoordinates"));
-  const generatedPublicCoordinates=approximateCoordinates({id:clean(form.get("id"))||title,longitude:coordinates[0],latitude:coordinates[1]});
-  const publicCoordinates=requestedPublicCoordinates||generatedPublicCoordinates;
-  if(clean(form.get("publicCoordinates"))&&!requestedPublicCoordinates)return json({error:"Customer map pin must contain valid Latitude, Longitude coordinates"},422,env);
-  const publicDistance=coordinateDistanceMetres(coordinates,publicCoordinates);
-  if(publicDistance<750||publicDistance>1500)return json({error:"Customer map pin must be 750 metres to 1.5 km from the exact site"},422,env);
+  if(!title||!address||!price||!coordinates)return json({error:"Title, exact location, price and valid exact coordinates are required"},422,env);
+  const customerAddress=clean(form.get("publicAddress"));
+  const publicCoordinates=parseCoordinates(form.get("publicCoordinates"));
+  if(!customerAddress)return json({error:"Customer location is required. Enter the location that customers are allowed to see."},422,env);
+  if(!clean(form.get("publicCoordinates"))||!publicCoordinates)return json({error:"Customer map location is required. Enter valid customer Latitude, Longitude coordinates."},422,env);
   const socialVideo=instagramUrl(form.get("instagramUrl"));
   if(socialVideo===null)return json({error:"Instagram video must be a valid instagram.com/reel or instagram.com/p link"},422,env);
   const id=clean(form.get("id"))||`${slug(title)}-${Date.now().toString(36)}`;
