@@ -31,18 +31,14 @@ function findPublicProperty(catalog, identity) {
 }
 
 function googleMapsDirectionsUrl(coordinates) {
-  const [lng, lat] = coordinates.map(Number);
+  const [lng, lat] = (coordinates || []).map(Number);
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return "";
   return "https://www.google.com/maps/dir/?api=1&destination=" + encodeURIComponent(lat + "," + lng);
 }
 
-function installSafeShare(property, mapsUrl) {
-  const shareButton = document.querySelector("#detail-content .share-property");
-  if (!shareButton || shareButton.dataset.customerLocationShare === "1") return;
-  shareButton.dataset.customerLocationShare = "1";
-
+function buildShareText(property, mapsUrl) {
   const propertyLink = location.origin + location.pathname + "?property=" + encodeURIComponent(property.id);
-  const shareText = [
+  return [
     property.title,
     "Price: " + property.price,
     "Customer Location: " + property.address,
@@ -51,9 +47,18 @@ function installSafeShare(property, mapsUrl) {
     "Contact CoimbatoreVeedu Builders: 9003787621",
     "Property details: " + propertyLink
   ].filter(Boolean).join("\n");
-  const whatsappShare = "https://wa.me/?text=" + encodeURIComponent(shareText);
+}
 
-  shareButton.onclick = async () => {
+function installSafeShare(property, mapsUrl) {
+  const shareButton = document.querySelector("#detail-content .share-property");
+  if (!shareButton) return;
+
+  const shareText = buildShareText(property, mapsUrl);
+  const whatsappShare = "https://wa.me/?text=" + encodeURIComponent(shareText);
+  shareButton.dataset.customerLocationShare = "1";
+  shareButton.onclick = async (event) => {
+    event?.preventDefault?.();
+    event?.stopImmediatePropagation?.();
     if (navigator.share) {
       try {
         await navigator.share({ title: property.title, text: shareText });
@@ -66,48 +71,62 @@ function installSafeShare(property, mapsUrl) {
   };
 }
 
-async function installNavigationAction() {
+async function prepareCustomerLocationActions() {
   const dialog = document.querySelector("#details");
   const actions = document.querySelector("#detail-content .property-actions");
-  if (!dialog?.open || !actions || actions.querySelector(".navigate-customer-location")) return;
+  if (!dialog?.open || !actions) return;
 
   const identity = currentDetailsIdentity();
   if (!identity) return;
 
-  const button = document.createElement("a");
-  button.className = "navigate-customer-location";
-  button.textContent = "📍 Navigate";
-  button.setAttribute("aria-label", "Navigate to customer meeting location");
-  button.href = "#";
-  button.dataset.state = "loading";
-  actions.prepend(button);
-
-  const note = document.createElement("p");
-  note.className = "customer-navigation-note";
-  note.textContent = "Navigation and Share Property use the customer location you selected. Contact us for the exact property site visit.";
-  actions.insertAdjacentElement("afterend", note);
-
   try {
     const property = findPublicProperty(await getPublicCatalog(), identity);
-    const coordinates = property?.coordinates;
-    const url = Array.isArray(coordinates) && coordinates.length === 2 ? googleMapsDirectionsUrl(coordinates) : "";
-    if (!property || !url) throw new Error("Customer location unavailable");
+    if (!property) throw new Error("Customer property unavailable");
+    const url = Array.isArray(property.coordinates) && property.coordinates.length === 2 ? googleMapsDirectionsUrl(property.coordinates) : "";
+
+    // Always replace the Share Property handler with the customer-safe payload,
+    // even if the Navigate button was already inserted during an earlier render.
+    installSafeShare(property, url);
+
+    let button = actions.querySelector(".navigate-customer-location");
+    if (!button) {
+      button = document.createElement("a");
+      button.className = "navigate-customer-location";
+      button.textContent = "📍 Navigate";
+      button.setAttribute("aria-label", "Navigate to customer meeting location");
+      actions.prepend(button);
+    }
+
+    let note = document.querySelector("#detail-content .customer-navigation-note");
+    if (!note) {
+      note = document.createElement("p");
+      note.className = "customer-navigation-note";
+      actions.insertAdjacentElement("afterend", note);
+    }
+
+    if (!url) {
+      button.href = "#";
+      button.dataset.state = "error";
+      button.textContent = "📍 Location unavailable";
+      button.removeAttribute("target");
+      button.onclick = (event) => event.preventDefault();
+      note.textContent = "Customer map coordinates are not available yet. Share Property will still use the customer location text and will never expose the exact site.";
+      return;
+    }
+
     button.href = url;
     button.target = "_blank";
     button.rel = "noopener";
     button.dataset.state = "ready";
+    button.textContent = "📍 Navigate";
     button.title = property.address ? "Navigate to " + property.address : "Navigate to customer meeting location";
-    installSafeShare(property, url);
+    note.textContent = "Navigation and Share Property use the customer location you selected. Contact us for the exact property site visit.";
   } catch (error) {
-    button.dataset.state = "error";
-    button.textContent = "📍 Location unavailable";
-    button.removeAttribute("target");
-    button.onclick = (event) => event.preventDefault();
-    note.textContent = "Customer navigation location is not available for this property yet. Share Property will not expose the exact site location.";
-    console.info("Customer navigation could not be prepared.", error);
+    console.info("Customer location actions could not be prepared.", error);
   }
 }
 
-const observer = new MutationObserver(() => installNavigationAction());
+const observer = new MutationObserver(() => window.setTimeout(prepareCustomerLocationActions, 0));
 observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["open"] });
-document.addEventListener("click", () => window.setTimeout(installNavigationAction, 40), true);
+document.addEventListener("click", () => window.setTimeout(prepareCustomerLocationActions, 40), true);
+window.addEventListener("pageshow", () => window.setTimeout(prepareCustomerLocationActions, 100));
