@@ -1,85 +1,13 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>CoimbatoreVeedu Builders - Property Details</title>
-  <meta name="theme-color" content="#0d5c4c" />
-  <style>
-    *{box-sizing:border-box}
-    body{margin:0;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:linear-gradient(180deg,#eaf6f2 0,#f7faf9 42%,#fff 100%);color:#123b34}
-    .wrap{max-width:620px;margin:0 auto;padding:22px 16px 38px}
-    .hero{background:linear-gradient(145deg,#0d5c4c,#0b8068);color:#fff;border-radius:26px;padding:24px 22px;box-shadow:0 18px 42px rgba(13,92,76,.22);margin-bottom:16px;position:relative;overflow:hidden}
-    .hero:after{content:"";position:absolute;width:160px;height:160px;border-radius:50%;background:rgba(255,255,255,.08);right:-54px;top:-62px}
-    .brand{font-size:12px;letter-spacing:.13em;font-weight:900;text-transform:uppercase;opacity:.88}
-    .hero h1{font-size:29px;line-height:1.08;margin:8px 0 8px}.hero p{margin:0;color:#dcf4ec;font-size:14px;line-height:1.5}
-    .card{background:#fff;border:1px solid #dcebe6;border-radius:24px;padding:20px;box-shadow:0 12px 34px rgba(18,59,52,.08)}
-    .card h2{font-size:20px;margin:0 0 5px}.card>p{margin:0 0 17px;color:#61756f;font-size:14px}
-    .areas{display:grid;grid-template-columns:1fr 1fr;gap:11px}
-    .area{display:flex;align-items:center;justify-content:space-between;text-decoration:none;border:1px solid #d8e7e2;background:#fbfefd;border-radius:16px;padding:14px 14px;font-size:15px;font-weight:800;color:#174a40;cursor:pointer;min-height:58px;box-shadow:0 3px 10px rgba(15,92,76,.04);transition:.14s ease}
-    .area:after{content:"›";width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:#e7f4ef;color:#0d6b58;font-size:20px;line-height:1}
-    .area:active{transform:scale(.985);background:#f0f8f5}
-    .status{display:none;margin-top:16px;padding:13px;border-radius:13px;background:#f1f6f4;color:#39574f;font-size:13px}.status.show{display:block}
-    .trust{text-align:center;color:#71847e;font-size:12px;margin-top:16px}.trust b{color:#27584e}
-    @media(max-width:390px){.areas{grid-template-columns:1fr}.hero h1{font-size:25px}}
-  </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>CoimbatoreVeedu Builders - Property Details</title>
+<meta name="theme-color" content="#0d5c4c" />
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:linear-gradient(180deg,#eaf6f2 0,#f7faf9 42%,#fff 100%);color:#123b34}.wrap{max-width:680px;margin:0 auto;padding:22px 16px 38px}.hero{background:linear-gradient(145deg,#0d5c4c,#0b8068);color:#fff;border-radius:26px;padding:24px 22px;box-shadow:0 18px 42px rgba(13,92,76,.22);margin-bottom:16px;position:relative;overflow:hidden}.brand{font-size:12px;letter-spacing:.13em;font-weight:900;text-transform:uppercase;opacity:.88}.hero h1{font-size:29px;line-height:1.08;margin:8px 0}.hero p{margin:0;color:#dcf4ec;font-size:14px}.card{background:#fff;border:1px solid #dcebe6;border-radius:24px;padding:20px;box-shadow:0 12px 34px rgba(18,59,52,.08)}.card h2{font-size:20px;margin:0 0 5px}.card>p{margin:0 0 17px;color:#61756f;font-size:14px}.areas{display:grid;grid-template-columns:1fr;gap:10px}.area{display:block;text-decoration:none;border:1px solid #d8e7e2;background:#fbfefd;border-radius:16px;padding:14px 16px;color:#174a40;cursor:pointer;box-shadow:0 3px 10px rgba(15,92,76,.04)}.area b{display:block;font-size:16px;margin-bottom:4px}.area span{display:block;font-size:12px;line-height:1.45;color:#61756f}.area:active{transform:scale(.985);background:#f0f8f5}.status{display:none;margin-top:16px;padding:13px;border-radius:13px;background:#f1f6f4;color:#39574f;font-size:13px}.status.show{display:block}.trust{text-align:center;color:#71847e;font-size:12px;margin-top:16px}.trust b{color:#27584e}
+</style>
 </head>
-<body>
-  <main class="wrap">
-    <section class="hero">
-      <div class="brand">CoimbatoreVeedu Builders</div>
-      <h1>Property Details</h1>
-      <p>Choose your preferred Coimbatore area to continue on WhatsApp.</p>
-    </section>
-    <section class="card">
-      <h2>Select your preferred area</h2>
-      <p>Tap any location below.</p>
-      <div class="areas" id="areas"></div>
-      <div class="status" id="status"></div>
-    </section>
-    <div class="trust"><b>CoimbatoreVeedu Builders</b> · Property enquiries across Coimbatore</div>
-  </main>
-<script>
-(() => {
-  const API='https://coimbatore-lead-crm-api.britsingh20.workers.dev';
-  const WHATSAPP_NUMBER='918148127587';
-  const AREAS=['Kalapatti','Saravanampatti','Vadavalli','Sulur','Karamadai','Kovilpalayam','Annur','Mettupalayam','Malumichampatti','Idigarai','Keeranatham'];
-  const params=new URLSearchParams(location.search);
-  const ref=(params.get('ref')||'').trim().toUpperCase();
-  const box=document.getElementById('areas');
-  const status=document.getElementById('status');
-  const show=(text)=>{status.textContent=text;status.classList.add('show')};
-
-  if(!ref){
-    show('This link is missing the enquiry reference. Please open the latest property-details link sent to you.');
-    return;
-  }
-
-  function trackSelection(area){
-    const body=JSON.stringify({ref,area});
-    try {
-      if(navigator.sendBeacon){
-        const blob=new Blob([body],{type:'text/plain;charset=UTF-8'});
-        navigator.sendBeacon(`${API}/api/social/area/select`,blob);
-        return;
-      }
-    } catch (_) {}
-    try {
-      fetch(`${API}/api/social/area/select`,{method:'POST',headers:{'content-type':'application/json'},body,keepalive:true,mode:'cors'}).catch(()=>{});
-    } catch (_) {}
-  }
-
-  AREAS.forEach(area=>{
-    const message=`Hi, I need property details in ${area}. Ref: ${ref}`;
-    const whatsapp=`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
-    const link=document.createElement('a');
-    link.className='area';
-    link.textContent=area;
-    link.href=whatsapp;
-    link.addEventListener('click',()=>trackSelection(area),{passive:true});
-    box.appendChild(link);
-  });
-})();
-</script>
-</body>
-</html>
+<body><main class="wrap"><section class="hero"><div class="brand">CoimbatoreVeedu Builders</div><h1>Property Details</h1><p>Choose your preferred Coimbatore area to continue on WhatsApp.</p></section><section class="card"><h2>Select your preferred area</h2><p>Tap your preferred area. Nearby localities are shown inside each option.</p><div class="areas" id="areas"></div><div class="status" id="status"></div></section><div class="trust"><b>CoimbatoreVeedu Builders</b> · Property enquiries across Coimbatore</div></main>
+<script>(()=>{const API='https://coimbatore-lead-crm-api.britsingh20.workers.dev',WHATSAPP_NUMBER='918148127587';const AREAS=[['Kalapatti','Cheran Nagar, Nehru Nagar West'],['Saravanampatti','Vilankurichi, nearby IT corridor localities'],['Vadavalli','Somayampalayam, Yamuna Nagar'],['Sulur','nearby Sulur localities'],['Karamadai','Santhimedu, Veerabandi Pirivu, Teachers Colony'],['Kovilpalayam','nearby Kovilpalayam localities'],['Annur','nearby Annur localities'],['Mettupalayam','nearby Mettupalayam localities'],['Malumichampatti','nearby Malumichampatti localities'],['Idigarai','nearby Idigarai localities'],['Keeranatham','nearby Keeranatham localities'],['Thondamuthur','nearby Thondamuthur localities']];const p=new URLSearchParams(location.search),ref=(p.get('ref')||'').trim().toUpperCase(),box=document.getElementById('areas'),status=document.getElementById('status');const show=t=>{status.textContent=t;status.classList.add('show')};if(!ref){show('This link is missing the enquiry reference. Please open the latest property-details link sent to you.');return}function trackSelection(area){const body=JSON.stringify({ref,area});try{if(navigator.sendBeacon){navigator.sendBeacon(`${API}/api/social/area/select`,new Blob([body],{type:'text/plain;charset=UTF-8'}));return}}catch(_){}fetch(`${API}/api/social/area/select`,{method:'POST',headers:{'content-type':'application/json'},body,keepalive:true,mode:'cors'}).catch(()=>{})}AREAS.forEach(([area,subs])=>{const msg=`Hi, I need property details in ${area}. Ref: ${ref}`;const a=document.createElement('a');a.className='area';a.href=`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(msg)}`;a.innerHTML=`<b>${area}</b><span>(${subs})</span>`;a.addEventListener('click',()=>trackSelection(area),{passive:true});box.appendChild(a)})})();</script></body></html>
