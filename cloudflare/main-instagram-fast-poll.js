@@ -1,4 +1,4 @@
-import worker from './main-meta-webhooks.js';
+import worker from './main-meta-webhooks-public-reply.js';
 
 async function runPollCycle(controller, env) {
   let pending = null;
