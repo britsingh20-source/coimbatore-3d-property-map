@@ -1,0 +1,62 @@
+name: Configure Facebook AREA Flow
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/configure-facebook-area-flow.yml'
+      - 'cloudflare/main-meta-webhooks-public-reply.js'
+  workflow_dispatch:
+
+jobs:
+  configure-facebook-area-flow:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.R2_ACCOUNT_ID }}
+      FACEBOOK_PAGE_ACCESS_TOKEN: ${{ secrets.FACEBOOK_PAGE_ACCESS_TOKEN || secrets.META_PAGE_ACCESS_TOKEN || secrets.FACEBOOK_ACCESS_TOKEN }}
+      FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID || secrets.META_PAGE_ID }}
+      WORKER_NAME: coimbatore-lead-crm-api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify Facebook configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ -n "${CLOUDFLARE_API_TOKEN:-}" ] || { echo "CLOUDFLARE_API_TOKEN is missing"; exit 1; }
+          [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ] || { echo "CLOUDFLARE_ACCOUNT_ID is missing"; exit 1; }
+          [ -n "${FACEBOOK_PAGE_ACCESS_TOKEN:-}" ] || { echo "Facebook Page access token is missing. Add FACEBOOK_PAGE_ACCESS_TOKEN (or META_PAGE_ACCESS_TOKEN)."; exit 1; }
+          [ -n "${FACEBOOK_PAGE_ID:-}" ] || { echo "Facebook Page ID is missing. Add FACEBOOK_PAGE_ID (or META_PAGE_ID)."; exit 1; }
+      - name: Install Wrangler
+        run: npm install --no-save wrangler@latest
+      - name: Configure Worker Facebook secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > wrangler.facebook.toml <<EOF
+          name = "${WORKER_NAME}"
+          compatibility_date = "2026-09-01"
+          EOF
+          printf '%s' "$FACEBOOK_PAGE_ACCESS_TOKEN" | npx wrangler secret put FACEBOOK_PAGE_ACCESS_TOKEN --config wrangler.facebook.toml
+          printf '%s' "$FACEBOOK_PAGE_ID" | npx wrangler secret put FACEBOOK_PAGE_ID --config wrangler.facebook.toml
+      - name: Verify Facebook Page token
+        shell: bash
+        run: |
+          set -euo pipefail
+          PAGE=$(curl -fsS -G "https://graph.facebook.com/v26.0/${FACEBOOK_PAGE_ID}" \
+            --data-urlencode "fields=id,name" \
+            --data-urlencode "access_token=${FACEBOOK_PAGE_ACCESS_TOKEN}")
+          echo "$PAGE" | jq -e --arg ID "$FACEBOOK_PAGE_ID" '.id == $ID' >/dev/null
+          echo "Facebook Page token verified for: $(echo "$PAGE" | jq -r '.name // .id')"
+      - name: Subscribe Page webhook fields
+        shell: bash
+        run: |
+          set -euo pipefail
+          RESULT=$(curl -fsS -X POST "https://graph.facebook.com/v26.0/${FACEBOOK_PAGE_ID}/subscribed_apps" \
+            --data-urlencode "subscribed_fields=feed" \
+            --data-urlencode "access_token=${FACEBOOK_PAGE_ACCESS_TOKEN}")
+          echo "$RESULT" | jq -e '.success == true' >/dev/null
+          echo "Facebook Page subscribed to feed webhook events"
