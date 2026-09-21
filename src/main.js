@@ -10,14 +10,41 @@ const absoluteMediaUrl = (url) => url?.startsWith("/api/") ? API_BASE + url : ur
 const startupToken = localStorage.getItem("crm-telecaller-session-token") || "";
 const catalogCacheKey = startupToken ? "published-property-catalog-internal" : "published-property-catalog-public";
 const catalogCache = startupToken ? sessionStorage : localStorage;
+let cachedCatalog = null;
 try {
   localStorage.removeItem("published-property-catalog");
   localStorage.removeItem("published-property-catalog-internal");
   const cached = JSON.parse(catalogCache.getItem(catalogCacheKey) || "null");
-  if (Array.isArray(cached) && cached.length) properties.splice(0, properties.length, ...cached);
+  if (Array.isArray(cached) && cached.length) cachedCatalog = cached;
 } catch (error) {
   console.info("Could not read the cached property catalog.", error);
 }
+
+const catalogController = new AbortController();
+const catalogTimeout = window.setTimeout(() => catalogController.abort(), 5000);
+try {
+  const response = await fetch(API_BASE + "/api/properties", {
+    headers: startupToken ? { Authorization: "Bearer " + startupToken } : {},
+    signal: catalogController.signal
+  });
+  const data = response.ok ? await response.json() : null;
+  if (Array.isArray(data?.properties) && data.properties.length) {
+    const catalog = data.properties.map((property) => ({
+      ...property,
+      tour: (property.tour || []).map((photo) => ({ ...photo, url: absoluteMediaUrl(photo.url) }))
+    }));
+    properties.splice(0, properties.length, ...catalog);
+    catalogCache.setItem(catalogCacheKey, JSON.stringify(catalog));
+  } else if (cachedCatalog) {
+    properties.splice(0, properties.length, ...cachedCatalog);
+  }
+} catch (error) {
+  if (cachedCatalog) properties.splice(0, properties.length, ...cachedCatalog);
+  console.info("Published property catalog is temporarily unavailable.", error);
+} finally {
+  window.clearTimeout(catalogTimeout);
+}
+
 if (!startupToken) properties.forEach((property) => {
   if (property.exactLocation === false) return;
   let hash = 0;
@@ -28,18 +55,6 @@ if (!startupToken) properties.forEach((property) => {
   property.exactLocation = false;
   property.locationAccuracy = "approximate_1km";
 });
-fetch(API_BASE + "/api/properties", { headers: startupToken ? { Authorization: "Bearer " + startupToken } : {} }).then((response) => response.ok ? response.json() : null).then((data) => {
-  if (!Array.isArray(data?.properties) || !data.properties.length) return;
-  const catalog = data.properties.map((property) => ({
-    ...property,
-    tour: (property.tour || []).map((photo) => ({ ...photo, url: absoluteMediaUrl(photo.url) }))
-  }));
-  const serialized = JSON.stringify(catalog);
-  if (catalogCache.getItem(catalogCacheKey) !== serialized) {
-    catalogCache.setItem(catalogCacheKey, serialized);
-    window.location.reload();
-  }
-}).catch((error) => console.info("Published property catalog is temporarily unavailable.", error));
 
 const CENTER = [76.9005, 11.029];
 const KNOWN_AREAS = ["Vadavalli", "Saravanampatti", "Kalapatti", "Mettupalayam", "Thudiyalur", "Pannimadai", "Idigarai", "Sulur", "Veerappandi", "Pollachi", "Karamadai", "Somayampalayam", "Bommanampalayam"];
