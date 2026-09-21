@@ -10,6 +10,7 @@ const absoluteMediaUrl = (url) => url?.startsWith("/api/") ? API_BASE + url : ur
 const startupToken = localStorage.getItem("crm-telecaller-session-token") || "";
 const catalogCacheKey = startupToken ? "published-property-catalog-internal" : "published-property-catalog-public";
 const catalogCache = startupToken ? sessionStorage : localStorage;
+async function bootstrap() {
 let cachedCatalog = null;
 try {
   localStorage.removeItem("published-property-catalog");
@@ -660,5 +661,16 @@ editorForm.addEventListener("submit", async (event) => {
   } finally {
     submit.disabled = false;
     submit.textContent = "Save Property";
+  }
+});
+
+}
+bootstrap().catch((error) => {
+  console.error("Property map could not start.", error);
+  const loading = document.querySelector("#loading");
+  if (loading) {
+    loading.classList.remove("hidden");
+    loading.querySelector("b").textContent = "Could not load the property map";
+    loading.querySelector("small").textContent = "Please refresh and try again.";
   }
 });
