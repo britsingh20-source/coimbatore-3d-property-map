@@ -1,0 +1,11 @@
+{
+  "name": "coimbatore-pocket-leads",
+  "main": "telecalling-worker.js",
+  "compatibility_date": "2026-10-22",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "observability": {"enabled": true},
+  "rules": [{"type": "Text", "globs": ["**/*.html", "**/telecalling-app.js"], "fallthrough": true}],
+  "d1_databases": [{"binding": "DB", "database_name": "coimbatore-lead-crm", "database_id": "783b233a-ff40-4794-bec9-6ee41b3021f9"}],
+  "services": [{"binding": "CRM", "service": "coimbatore-lead-crm-api"}]
+}

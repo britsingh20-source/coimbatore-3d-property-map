@@ -1,0 +1,26 @@
+name: Deploy Shared Telecalling
+on:
+  push:
+    branches: [main]
+    paths: ['cloudflare/telecalling*', 'cloudflare/wrangler.telecalling.jsonc', 'public/telecalling*', '.github/workflows/deploy-telecalling.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: shared-telecalling
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.R2_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node --test tests/telecalling.test.mjs
+      - run: npm install --no-save wrangler@latest
+      - run: npx wrangler d1 execute coimbatore-lead-crm --remote --config cloudflare/wrangler.telecalling.jsonc --file cloudflare/telecalling.sql
+      - run: npx wrangler deploy --config cloudflare/wrangler.telecalling.jsonc
